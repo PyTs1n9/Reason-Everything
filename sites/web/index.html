@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentFlow · 论文科研工作台</title>
+<meta name="description" content="论文科研工作台（浏览器演示）：证据卡逐字回查、笔记起草、论断审计、门禁与归档。PDF 在浏览器本地解析，全离线模拟后端。">
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<a class="skip-link" href="#sections">跳到正文</a>
+
+<header class="topbar">
+  <p class="topbar__brand">
+    <span class="topbar__org">AgentFlow</span>
+    <span class="topbar__unit">论文科研工作台</span>
+    <span id="model-chip" class="tag info">浏览器模拟后端 · 离线</span>
+  </p>
+  <div class="topbar__actions">
+    <button type="button" class="btn btn--ghost" id="btn-toc-mobile" aria-expanded="false" aria-controls="toc-list" hidden>目录</button>
+    <button type="button" class="btn btn--ghost" id="btn-csv" hidden>导出数据（CSV）</button>
+    <button type="button" class="btn btn--ghost" id="btn-print" hidden>打印 / 导出 PDF</button>
+    <button type="button" class="btn btn--solid" id="upload-btn">上传 PDF</button>
+    <input id="file" type="file" accept="application/pdf" hidden>
+  </div>
+</header>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span class="sidebar-head__title">文献</span>
+      <span id="paper-count" class="sidebar-head__count">0</span>
+    </div>
+    <div id="paper-list" class="paper-list"></div>
+    <div class="sidebar-foot">
+      <div class="sidebar-foot__label">本地会话</div>
+      <div>文件不离开浏览器 · 刷新即清空</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="empty" class="empty">
+      <p class="masthead__eyebrow">论文科研工作台 · 五节点链路 · 浏览器演示</p>
+      <h1 class="masthead__title">把一篇 PDF 拖进来，<em>让它接受回查</em>。</h1>
+      <p class="masthead__standfirst">
+        工作台先抽取证据卡，逐字回查每一句引文是否真的在那一页；
+        只有通过回查的卡片才允许进入写作，笔记写完后还要逐段审计论断——引用对不上就阻断。
+        PDF 由浏览器本地解析，链路在本页运行，不上传任何文件。
+      </p>
+      <p class="masthead__byline"><span id="empty-hint" class="hint-line">支持拖拽上传，仅处理带文字层的 PDF。</span></p>
+      <button type="button" class="btn btn--solid" id="empty-upload">选择文件</button>
+    </div>
+
+    <div id="report" hidden>
+      <div class="masthead">
+        <p class="masthead__eyebrow" id="d-eyebrow">—</p>
+        <h1 class="masthead__title" id="d-title">—</h1>
+        <p class="masthead__standfirst" id="d-standfirst"></p>
+        <ul class="masthead__byline" id="d-byline"></ul>
+      </div>
+
+      <div class="runbar" id="runbar">
+        <div id="steps" class="steps"></div>
+        <div class="runbar__actions">
+          <span class="switch" title="不调用任何模型，从真实页面文本截句；回查与审计真实执行">模拟后端 · 全离线</span>
+          <button type="button" class="btn btn--solid" id="run">运行解析</button>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div class="sections" id="sections">
+
+          <section class="section" id="sec-overview" aria-labelledby="sec-overview-h">
+            <div class="section__head">
+              <span class="section__no">01</span>
+              <h2 id="sec-overview-h">概览</h2>
+              <span class="section__meta" id="ov-meta"></span>
+            </div>
+            <div id="ov-banner"></div>
+            <div class="summary">
+              <div class="summary__text">
+                <h3 class="subhead">证据卡 · 按页回查结果</h3>
+                <figure class="figure">
+                  <figcaption class="figure__cap">
+                    <span class="figure__title">逐页定位：通过 / 失败</span>
+                    <span class="figure__meta">单位：张 · 仅统计已抽取卡片</span>
+                  </figcaption>
+                  <div class="chart" id="chart-cards"></div>
+                  <p class="figure-note" id="cards-note"></p>
+                </figure>
+                <h3 class="subhead">论断审计 · 四态分布</h3>
+                <figure class="figure">
+                  <figcaption class="figure__cap">
+                    <span class="figure__title">supported / needs_qualification / insufficient_evidence / illustration</span>
+                    <span class="figure__meta">最近一次运行</span>
+                  </figcaption>
+                  <div class="chart" id="chart-claims"></div>
+                  <p class="figure-note" id="claims-note"></p>
+                </figure>
+              </div>
+              <div class="summary__data">
+                <h3 class="sr-only">关键指标</h3>
+                <dl class="kpis" id="kpis"></dl>
+                <p class="figure-note">指标取自本页台账数据，与下方章节同一来源。</p>
+              </div>
+            </div>
+            <dl class="spec" id="ov-spec"></dl>
+          </section>
+
+          <section class="section" id="sec-cards" aria-labelledby="sec-cards-h">
+            <div class="section__head">
+              <span class="section__no">02</span>
+              <h2 id="sec-cards-h">证据卡</h2>
+              <span class="section__meta" id="cards-meta"></span>
+            </div>
+            <div class="chips" id="card-chips" role="group" aria-label="按回查结果筛选证据卡"></div>
+            <div id="cards-body" class="tab-body"></div>
+          </section>
+
+          <section class="section" id="sec-note" aria-labelledby="sec-note-h">
+            <div class="section__head">
+              <span class="section__no">03</span>
+              <h2 id="sec-note-h">笔记</h2>
+              <span class="section__meta" id="note-meta"></span>
+            </div>
+            <div id="note-toolbar" class="note-toolbar" hidden>
+              <button type="button" class="btn btn--ghost" id="copy-note">复制 Markdown</button>
+              <button type="button" class="btn btn--ghost" id="download-note">下载 .md</button>
+            </div>
+            <article id="note-body" class="tab-body"></article>
+          </section>
+
+          <section class="section" id="sec-claims" aria-labelledby="sec-claims-h">
+            <div class="section__head">
+              <span class="section__no">04</span>
+              <h2 id="sec-claims-h">论断审计</h2>
+              <span class="section__meta" id="claims-meta"></span>
+            </div>
+            <div id="claims-body" class="tab-body"></div>
+          </section>
+
+          <section class="section" id="sec-log" aria-labelledby="sec-log-h">
+            <div class="section__head">
+              <span class="section__no">05</span>
+              <h2 id="sec-log-h">运行记录</h2>
+              <span class="section__meta" id="log-meta"></span>
+            </div>
+            <div id="log-body" class="tab-body"></div>
+          </section>
+
+        </div>
+
+        <aside class="rail" aria-labelledby="toc-h">
+          <div class="rail__inner">
+            <h2 class="rail__title" id="toc-h">目录</h2>
+            <nav class="toc">
+              <ul class="toc__list" id="toc-list">
+                <li><a class="toc__link" href="#sec-overview"><span class="toc__no">01</span><span class="toc__name">概览</span></a></li>
+                <li><a class="toc__link" href="#sec-cards"><span class="toc__no">02</span><span class="toc__name">证据卡</span></a></li>
+                <li><a class="toc__link" href="#sec-note"><span class="toc__no">03</span><span class="toc__name">笔记</span></a></li>
+                <li><a class="toc__link" href="#sec-claims"><span class="toc__no">04</span><span class="toc__name">论断审计</span></a></li>
+                <li><a class="toc__link" href="#sec-log"><span class="toc__no">05</span><span class="toc__name">运行记录</span></a></li>
+              </ul>
+            </nav>
+            <p class="rail__hint">当前阅读章节在目录中高亮。</p>
+            <div class="rail__block">
+              <h3 class="rail__sub">阅读与导出</h3>
+              <p class="rail__text">打印样式隐藏侧栏与控件，保留标题、指标、图表与正文，可直接导出 PDF。</p>
+              <p class="rail__text">CSV 导出当前文献的证据卡与论断台账。</p>
+            </div>
+            <div class="rail__block rail__block--meta">
+              <h3 class="rail__sub">链路说明</h3>
+              <p class="rail__text">cards 逐字回查 → note 只用通过卡片写作 → audit 逐段核查 → gate 全有据才放行 → archive 原子落盘。</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="colophon">
+        <div class="colophon__col"><h4>回查</h4><p>证据卡的引文必须能在对应页原文逐字定位，失败卡片不进入写作。</p></div>
+        <div class="colophon__col"><h4>审计</h4><p>笔记逐段列出事实性陈述，标四态；引用对不上即阻断。</p></div>
+        <div class="colophon__col"><h4>门禁</h4><p>全部 supported 才归档；有待限定论断转人工复核。</p></div>
+        <div class="colophon__col"><h4>隐私</h4><p>PDF 由浏览器本地解析，链路全离线运行，文件不离开本机。</p></div>
+      </footer>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<div id="drop-overlay" hidden><span>松手即上传</span></div>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

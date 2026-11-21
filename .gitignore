@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 本地数据与密钥配置（*.example.toml 保留）
+workspace/
+*.local.toml
+config.toml
+models.toml
+.env
+
+# 工具/编辑器内部状态
+.workbuddy/
+.DS_Store
+*.log
+
+# Sites 构建产物
+sites/node_modules/
+sites/dist/

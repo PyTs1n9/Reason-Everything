@@ -1,0 +1,13 @@
+{
+  "name": "agentflow-sites",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AgentFlow 的 Qoder Sites 版本：Deno Edge Function + 托管数据库",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
