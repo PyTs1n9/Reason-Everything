@@ -206,7 +206,8 @@ export function validateAnalysisOutput(
   }
 
   const contribution = request.evidence.augmentationContributionPp;
-  if (contribution === null) {
+  const hasMissingCells = request.evidence.cells.some((c) => c.status !== "measured");
+  if (contribution === null && hasMissingCells) {
     const contributionWithNumber = [
       /贡献[^。；\n]{0,20}[+-]\d+(?:\.\d+)?/,
       /贡献[^。；\n]{0,20}\d+(?:\.\d+)?\s*个百分点/,

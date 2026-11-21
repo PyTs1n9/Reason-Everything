@@ -59,3 +59,15 @@
 - **实测**（`cd sites && node --test tests/agent.test.ts` 19/19 pass、exit 0）：正常、空响应、坏 JSON、超时（timeoutMs=20）、伪造编号（引用+正文双拒）、错误增幅、缺证据、重复回调（`analyzeCalls` 保持 1）、修复成功（2 次调用带 repairFeedback）、修复失败（规则报告保留）全过；记录字段= requestId/kind/promptVersion/rulesVersion/revisionId/jobId/provider/model/result/attempts，序列化后不含访客原句与模型自由文本；提示词真实装入请求（systemPrompt 断言）。
 - **实测合计**：`cd sites && npm test` = **121/121 pass、fail 0、exit 0**（37+19+20+15+11+19）。
 - **剩余项**：真实模型调用未执行（缺项如上，待 PAT 确认与 Function 部署后用固定演示句做单次探针并记录脱敏任务号）；矩阵数据来源仍是卡 04，前端高亮与图表不在本卡；`tsc` 未跑（依赖冻结）。**下一卡**：07。
+
+## 卡 07 · 串联实验归因工作流（2026-11-21）
+
+- **交付**：新增 `src/workflow/service.ts`（`createWorkflowService`：12 个动作
+  `listProjects/createProject/createQuestion/parseClaim/confirmScope/previewImport/commitImport/analyze/getJob/getRevision/listRevisions/appendRunsAndReanalyze`，复用 02–06 现有函数不重复封装）；`docs/workflow-v1.md`（每动作输入/输出/错误/超时/权限表 + 可运行请求样例 + 可选 HTTP 映射说明，本卡未起第二套服务）；`tests/workflow.test.ts` 10 例。
+- **存储层纯新增**（`experiment/storage.ts`）：`confirmClaim`（needs_input→已确认，重复确认冲突）、`putAnalysis/getAnalysis`（模型四段产物 + 引用→格子/运行关联，与定稿快照分开）、`appendJobEvent/getJobEvents`（节点事件）、状态字段 `analyses/jobEvents` 入 `StoreState`（`defaultStoreState` 同步）。卡 02 冻结契约（四身份结构）未动。
+- **行为要点**：未确认范围 → `gated:true` 停在 needs_input，**零模型调用**；显式 `expectedParentId` 过期 → `stale_parent` 冲突发生在模型调用之前；同 requestId 重复 → 重建结果不再打模型；缺配置 → `modelOutput=pending` 只问缺项不调模型；无模型服务 → `unavailable` 规则照常存档；模型失败 → `failed` 保留规则报告，**再次分析自动沿用原证据快照**，存档事务内复查父版本（迟到旧版本不覆盖新结果）；事件含 jobId/revisionId/node/at/可读摘要；权限全走 actor 分区。
+- **验收实测**（`cd sites && node --test tests/workflow.test.ts` 10/10 pass、exit 0）：
+  - **A→B 摘要（去敏）**：`questionId=q_0001 | V1=rev_3a853c35… status=waiting_for_run model=ready cells=4 missing=2 | V2=rev_32520121… parent=V1 pairs=1(lr=0.01, delta=+0.20) missing=1 status=waiting_for_run | 变化=补入 R03 后 0.01 档由缺测变为已配对（+0.20），0.001/开 仍缺`。
+  - C 历史 R03 直接复用（该格零补跑单）；D「两个学习率下都提高了吗」→ 两档四格全覆盖；E agent=null → 规则可用+`unavailable`+job failed+事件摘要「模型服务不可用」；F 缺 seed 行 → `missingConfigs` 恰 `[R03:seed]`、模型零调用；G 同请求重放（模型调用数不变）+ 旧父版本冲突 + 刷新重试 → 版本数 2 正确；权限：BOB 对 alice 的项目/问题/作业全 NotFound；新服务实例恢复版本与事件；模型失败重试沿用 2 行原证据（V1 失败版本保留不被覆盖）。
+- **实测合计**：`cd sites && npm test` = **131/131 pass、fail 0、exit 0**（37+19+20+15+11+19+10）。另修 `agent/validate.ts` 一处边界：增强贡献约束仅在存在缺格时生效（两档齐全的包不再出现无合法文本）。
+- **剩余项**：真实模型/HTTP 映射/浏览器 UI 未做（08/09+，PAT 确认仍缺）；`tsc` 未跑（依赖冻结）。**下一卡**：08。

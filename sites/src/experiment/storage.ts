@@ -22,11 +22,13 @@ import type {
   AnalysisJob,
   AnalysisJobStatus,
   AnalysisRevision,
+  ClaimSpec,
   Project,
   Question,
   QuestionStatus,
   TrainingRun,
 } from "./types.ts";
+import type { AnalysisModelOutput } from "../agent/adapter.ts";
 import { validateRevision } from "./revision.ts";
 import { buildEvidencePackage, type EvidencePackage } from "./evidence.ts";
 import { runContentKey } from "./import.ts";
@@ -44,10 +46,47 @@ export interface StoreState {
   jobs: AnalysisJob[];
   /** `${questionId}:${requestKey}` → revisionId */
   idempotency: Record<string, string>;
+  /** 模型分析产物（与定稿快照分开存；卡 07 新增）。 */
+  analyses: StoredAnalysis[];
+  /** 作业节点事件（卡 07 新增）。 */
+  jobEvents: JobEvent[];
+}
+
+/** 模型四段分析与引用关联（模型产物，不属于不可变规则快照）。 */
+export interface StoredAnalysis {
+  revisionId: string;
+  questionId: string;
+  output: AnalysisModelOutput;
+  /** 每条引用 → 关联格子/运行（前端按 evidenceId 高亮）。 */
+  citations: Array<{ evidenceId: string; cellId: string | null; runIds: string[] }>;
+  promptVersion: string;
+  provider: string;
+  model: string;
+  createdAt: string;
+}
+
+/** 作业节点事件：jobId、revisionId、node、时间、可读摘要。 */
+export interface JobEvent {
+  eventId: string;
+  jobId: string;
+  revisionId: string | null;
+  node: "snapshot" | "rules" | "model" | "archive";
+  status: "started" | "completed" | "failed";
+  at: string;
+  summary: string;
 }
 
 export function defaultStoreState(): StoreState {
-  return { projects: [], questions: [], runs: [], revisions: [], jobs: [], idempotency: {} };
+  return {
+    projects: [],
+    questions: [],
+    runs: [],
+    revisions: [],
+    jobs: [],
+    idempotency: {},
+    analyses: [],
+    jobEvents: [],
+  };
 }
 
 export class StorageError extends Error {
@@ -149,6 +188,13 @@ export interface DataService {
   getJob(actor: Actor, jobId: string): Promise<AnalysisJob | null>;
   /** 模型重试只用定稿的原始快照（返回克隆）。 */
   getModelInput(actor: Actor, revisionId: string): Promise<AnalysisRevision["inputSnapshot"]>;
+
+  /** 确认结构化主张（needs_input → 已确认；重复确认报冲突）。 */
+  confirmClaim(actor: Actor, questionId: string, claim: ClaimSpec, now: string): Promise<Question>;
+  putAnalysis(actor: Actor, analysis: StoredAnalysis): Promise<StoredAnalysis>;
+  getAnalysis(actor: Actor, revisionId: string): Promise<StoredAnalysis | null>;
+  appendJobEvent(actor: Actor, event: JobEvent): Promise<JobEvent>;
+  getJobEvents(actor: Actor, jobId: string): Promise<JobEvent[]>;
 }
 
 export const DEMO_PROJECT_ID = "p_demo";
@@ -422,6 +468,50 @@ export function createDataService(backend: StorageBackend): DataService {
       const revision = state.revisions.find((r) => r.revisionId === revisionId);
       if (!revision) throw new NotFoundError(`版本不存在: ${revisionId}`);
       return clone(revision.inputSnapshot);
+    },
+
+    async confirmClaim(actor, questionId, claim, now) {
+      return backend.transact(actor, (draft) => {
+        const question = draft.questions.find((q) => q.questionId === questionId);
+        if (!question) throw new NotFoundError(`问题不存在: ${questionId}`);
+        if (question.confirmedClaim) {
+          throw new ConflictError("already_confirmed", `主张已确认过: ${questionId}`);
+        }
+        question.confirmedClaim = clone(claim);
+        question.status = deriveQuestionStatus(draft, question);
+        const project = requireProject(draft, question.projectId);
+        touch(project, now);
+        return clone(question);
+      });
+    },
+
+    async putAnalysis(actor, analysis) {
+      return backend.transact(actor, (draft) => {
+        const index = draft.analyses.findIndex((a) => a.revisionId === analysis.revisionId);
+        if (index >= 0) draft.analyses[index] = clone(analysis);
+        else draft.analyses.push(clone(analysis));
+        return clone(analysis);
+      });
+    },
+
+    async getAnalysis(actor, revisionId) {
+      const state = await backend.read(actor);
+      const analysis = state.analyses.find((a) => a.revisionId === revisionId);
+      return analysis ? clone(analysis) : null;
+    },
+
+    async appendJobEvent(actor, event) {
+      return backend.transact(actor, (draft) => {
+        if (!draft.jobEvents.some((e) => e.eventId === event.eventId)) {
+          draft.jobEvents.push(clone(event));
+        }
+        return clone(event);
+      });
+    },
+
+    async getJobEvents(actor, jobId) {
+      const state = await backend.read(actor);
+      return clone(state.jobEvents.filter((e) => e.jobId === jobId));
     },
   };
 }

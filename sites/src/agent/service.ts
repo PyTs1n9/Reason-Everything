@@ -272,3 +272,5 @@ export function createAgentService(adapter: ModelAdapter, options: AgentServiceO
     },
   };
 }
+
+export type AgentService = ReturnType<typeof createAgentService>;
