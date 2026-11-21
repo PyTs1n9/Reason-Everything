@@ -35,3 +35,16 @@
 - **附加实测**：效果 0（`0.00/未变`）与负数（`-1.00/下降`）均成反例；仅方向主张未变即反例；未知 seed → `needs_input`+`missingConfigs`、不发补跑单；乱序 deepEqual 一致；跨项目同 ID 不参与配对；重复候选列 `[R03,R05]` 且不选 99 分那条；cellId 含项目/因素/指标/学习率/开关、证据编号稳定不重复；建议与结论文字扫描无「显著/估算/估计/p 值/普遍/已证明」。
 - **实测合计**：`cd sites && npm test` = **91/91 pass、fail 0、exit 0**（37 旧回归 + 19 卡 02 + 20 卡 03 + 15 本卡）。
 - **剩余项**：真实模型、持久化、浏览器未测（05+）；补跑单提交后的 `requested` 持久化与用户选定重复候选的交互入口待后续卡。**下一卡**：05。
+
+## 卡 05 · 保存研究项目与分析版本（2026-11-21）
+
+- **平台能力复查（实际可用项，非猜测；来源=get_site 实测 + Sites 官方技能参考）**：
+  - 本项目实测（get_site include backend/storage/functions）：site `active`、`access_mode=selected`、`auth_integration_status=ready`、host `agentflow-jdu3pw2qe8r.qoder.website`；**backend.status=disabled（capabilities 空）、storage=disabled、functions=[]**；`get_database_schema` 返回「Database is disabled. Enable the backend only when the user's request authorizes it.」→ 托管数据库能力存在但本项目未启用，启用需用户授权（本卡不擅自开通云端资源）。
+  - 真实接口名（照抄官方参考，未猜）：数据库 `ensure_backend`（databaseAccessModel=function_backend）→ `get_database_schema`（schemaRef）→ 评审迁移计划；Function 运行时 `QODER_DATABASE` Secret + SDK2 + `Deno.serve` 入口 `index.ts`、路由 `/functions/v1/app/...`；访问身份=网关注入 `x-qoder-user-context` + 服务端 `auth.mjs` 的 `getUser/requireUser`（owner 取自请求身份，不信任浏览器提交），浏览器 `GET /__qoder_auth/me`；存储=部署注入 `_qoder/storage.mjs`（list/upload/download/remove/createSignedUrl…，需 storage 能力）；站主侧 `query_database_rows`/`get_function_logs`。
+- **交付**：`src/experiment/storage.ts`（同一 `StorageBackend` 接口 + `MemoryBackend` + `DataService`：项目新建/列表按更新倒序/查询/改名、问题新建/读取/版本列表、导入预览确认、训练记录查询、版本创建与历史读取、幂等请求键、`stale_parent` 冲突、原子事务、作业状态与定稿快照分离、按访问者分区隔离、`ensureDemoProject` 幂等）；`src/experiment/storage-indexeddb.ts`（IndexedDB 适配器，标注「本机保存」，单事务原子读改写）；`evidence.ts` 增 `conclusionsFromPackage`、`import.ts` 增导出 `runContentKey`（纯新增）；`tests/storage.test.ts` 11 例；测试台 `tests/harness/`（`build.mjs` 用 Node 内置 `stripTypeScriptTypes` 剥离 + `app.js` + `harness.html` + `serve.mjs`，产物 `js/` 已入 gitignore；测试台非产品页面，未美化任何产品 UI）。
+- **验收流程实测**（`cd sites && node --test tests/storage.test.ts` 11/11 pass、exit 0）：`[05-flow] 新建=1 导入=2 V1=rev_0001 重开=ok 追加=1 V2=rev_0002 读V1=一致 重复请求=created:false → 项目数=1 问题数=1 版本数=2`；V1 保存后逐字节一致、仍显示当时缺对照；V2 同 projectId/questionId、父版本 V1。
+- **持久化适配器真实刷新（浏览器实测，非内存）**：`node tests/harness/build.mjs` → `node tests/harness/serve.mjs` → in-app 浏览器三轮真实页面加载（两轮 `location.reload()` + 一轮手动 reload）均读回 `{"adapter":"本机保存","projects":1,"questions":1,"revisions":2,"versionIds":["rev_0001","rev_0002"],"v1Parent":null,"v1SnapshotRuns":2,"v1StillShowsMissing":true,"ok":true}`。内存适配器仅用于离线语义测试，**不作为刷新保存证明**。
+- **隔离与一致性实测**：两个访问者互不可见/不可改（存储分区执行，非前端筛选）；两项目同 runId 不串；同内容去重、异内容整批拒绝不落半行、旧实验不被覆盖；过期父版本 → `ConflictError(stale_parent)` 且无半个版本；事务回调抛错状态不变；runId 冒充 revisionId 被拒；作业状态变化与追加数据都不改写 V1 快照，`getModelInput` 返回克隆；同名项目靠 ID 区分、列表项恰五字段（projectId/name/questionCount/pendingCount/updatedAt）；demo 项目重复创建不复制。
+- **云端与本机行为区别**：IndexedDB=「本机保存」，仅当前浏览器设备可见，**不写成跨设备同步**；访客数据留在本机分区，不进匿名公共表。托管适配器**未验证**，缺三件：ensure_backend 用户授权、functions/app 路由部署、schemaRef 评审迁移；接入后隔离必须在服务层按 `x-qoder-user-context` 的 `user_id` 分区执行。
+- **实测合计**：`cd sites && npm test` = **102/102 pass、fail 0、exit 0**（37+19+20+15+11）。
+- **剩余项**：托管数据库/Function 真实接入未验证（需授权与部署，06+）；浏览器实测在 in-app 浏览器完成，未在公开发布域名复测；`tsc` 类型检查未跑（依赖冻结无 tsc）。**下一卡**：06。

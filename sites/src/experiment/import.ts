@@ -537,7 +537,7 @@ function canonicalConfig(config: RunConfig): Record<string, unknown> {
 }
 
 /** 内容 = source + 规范配置 + 整数化准确率；实验编号/备注/导入时间不参与。 */
-function contentKey(run: TrainingRun): string {
+export function runContentKey(run: TrainingRun): string {
   return JSON.stringify({
     source: run.source,
     config: canonicalConfig(run.config),
@@ -561,7 +561,7 @@ export function previewImport(text: string, options: PreviewOptions): ImportPrev
   for (const { run, complete } of built.rows) {
     const prior = byId.get(run.runId) ?? seen.get(run.runId);
     if (prior) {
-      if (contentKey(prior) === contentKey(run)) duplicates.push(run);
+      if (runContentKey(prior) === runContentKey(run)) duplicates.push(run);
       else conflicts.push({ runId: run.runId, existing: prior, incoming: run });
       continue;
     }

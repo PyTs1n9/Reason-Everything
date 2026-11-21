@@ -14,6 +14,7 @@ import type {
   Cell,
   ClaimSpec,
   QuestionStatus,
+  RuleConclusion,
   RunConfig,
   TrainingRun,
 } from "./types.ts";
@@ -526,4 +527,33 @@ export function buildEvidencePackage(
     counterexample,
     coverage,
   };
+}
+
+/** 把证据包转成分析版本可存储的规则结论（缺格 → insufficient_data，配对 → 方向，反例 → fail）。 */
+export function conclusionsFromPackage(pkg: EvidencePackage): RuleConclusion[] {
+  const conclusions: RuleConclusion[] = [];
+  for (const cell of pkg.cells) {
+    if (cell.status !== "measured") {
+      conclusions.push({
+        ruleId: `cell@${cell.cellId}`,
+        result: "insufficient_data",
+        detail: `${cell.cellId} 未测，缺测值为 null`,
+      });
+    }
+  }
+  for (const pair of pkg.pairs) {
+    conclusions.push({
+      ruleId: `direction@${pair.lr}`,
+      result: pair.direction === "提高" ? "pass" : "fail",
+      detail: `${pair.treatedRunId} vs ${pair.controlRunId} → ${pair.direction} ${pair.deltaPp} 个百分点`,
+    });
+  }
+  for (const lr of pkg.counterexample.refutingLrs) {
+    conclusions.push({
+      ruleId: `counterexample@${lr}`,
+      result: "fail",
+      detail: `lr=${lr} 构成原主张的实测反例`,
+    });
+  }
+  return conclusions;
 }

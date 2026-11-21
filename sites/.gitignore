@@ -2,3 +2,4 @@ node_modules/
 dist/
 .deno/
 *.log
+tests/harness/js/
