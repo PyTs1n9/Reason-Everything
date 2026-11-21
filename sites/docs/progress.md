@@ -48,3 +48,14 @@
 - **云端与本机行为区别**：IndexedDB=「本机保存」，仅当前浏览器设备可见，**不写成跨设备同步**；访客数据留在本机分区，不进匿名公共表。托管适配器**未验证**，缺三件：ensure_backend 用户授权、functions/app 路由部署、schemaRef 评审迁移；接入后隔离必须在服务层按 `x-qoder-user-context` 的 `user_id` 分区执行。
 - **实测合计**：`cd sites && npm test` = **102/102 pass、fail 0、exit 0**（37+19+20+15+11）。
 - **剩余项**：托管数据库/Function 真实接入未验证（需授权与部署，06+）；浏览器实测在 in-app 浏览器完成，未在公开发布域名复测；`tsc` 类型检查未跑（依赖冻结无 tsc）。**下一卡**：06。
+
+## 卡 06 · 接入模型分析与证据校验（2026-11-21）
+
+- **平台核对（真实动作，未猜）**：`get_context`（参数 `{}`）→ 返回形状含 `runtime.cloudAgents = { apiOrigin: "https://api.qoder.com", apiPathPrefix: "/api/v1/cloud", configured: true }`、`host.mode=desktop`；任务 ID **未提供**（该读取动作不产生任务号）。运行时路径（官方技能确认）= 浏览器 → 同源 Sites Function → QCA，Function 内读平台 Secret `QODER_PAT`。
+- **精确缺项（为何本卡不打真实调用）**：① 本项目 `functions: []`、`backend=disabled`（卡 05 实测）→ 路径中段不存在；② 启用 `ensure_backend(qoder)` 会自动创建 Qoder PAT，平台要求对此**单独明确确认**，本卡未包含该确认，故不执行；③ 无 `QODER_PAT`、无已部署 Function 路由、模型服务 Secret 未配置。备选路径（Function 调项目已授权模型服务）同样被 ①③ 阻塞。**真实预览探针：未执行**（无可用服务/配置），provider/model/任务号等字段按约定写「未提供」，mock 输出未记入 live 验收。
+- **已确认可用项**：cloudAgents origin（上行实测 configured=true）；官方 bundled 客户端 `createCloudAgentsClient({ origin })`（assets/cloud-agents.mjs，Function 目录用）；Managed API 路径 `/api/v1/cloud/*`；`ensure_backend(qoder)` + `QODER_PAT`（待确认后开通）。
+- **交付**：`src/agent/prompts.ts`（两条版本化 system 提示词资源：`parse-v1`/`analysis-v1`，测试可定位）；`src/agent/adapter.ts`（可切换 `ModelAdapter` 契约 + `MockAdapter` 桩 + `withTimeout`，不碰凭据）；`src/agent/facts.ts`（由卡 04 证据包预注册事实编号：cellId/pairId/suggestionId + 条件/运行/数值/贡献，`RULES_VERSION=evidence-v1`）；`src/agent/validate.ts`（服务端校验）；`src/agent/service.ts`（提示词装入、超时、解析→手动回退→确认、按 requestId 年等、最多修复重试一次、失败保留规则报告、脱敏调用记录）；`tests/agent.test.ts` 19 例。
+- **校验规则（确定性）**：调用一——字段集合恰为 factor/metric/scope/expectedDeltaPp/clarifyingQuestion、只用给定字典、scope 未经学生确认必须 null 且追问、增幅必须与原句百分点一致（拒绝 5≠2）、原句未写增幅必须 null、百分数不清必须追问、多余字段（实验数值）拒绝；调用二——四段 `{text, evidenceIds}` 结构与类型、引用必须存在于预注册事实、正文运行号必须真实（拒 R99）、正文数字必须绑定已注册事实（拒 83.7）、缺测时禁止出现增强贡献数值且 observation 必须引用缺格/未满足条件、有补跑单时 nextAction 必须引用动作事实；修复重试最多一次，仍失败 → `model 分析失败` + `ruleReport`（证据包原样）；自由文本仅视为建议草稿。
+- **实测**（`cd sites && node --test tests/agent.test.ts` 19/19 pass、exit 0）：正常、空响应、坏 JSON、超时（timeoutMs=20）、伪造编号（引用+正文双拒）、错误增幅、缺证据、重复回调（`analyzeCalls` 保持 1）、修复成功（2 次调用带 repairFeedback）、修复失败（规则报告保留）全过；记录字段= requestId/kind/promptVersion/rulesVersion/revisionId/jobId/provider/model/result/attempts，序列化后不含访客原句与模型自由文本；提示词真实装入请求（systemPrompt 断言）。
+- **实测合计**：`cd sites && npm test` = **121/121 pass、fail 0、exit 0**（37+19+20+15+11+19）。
+- **剩余项**：真实模型调用未执行（缺项如上，待 PAT 确认与 Function 部署后用固定演示句做单次探针并记录脱敏任务号）；矩阵数据来源仍是卡 04，前端高亮与图表不在本卡；`tsc` 未跑（依赖冻结）。**下一卡**：07。
