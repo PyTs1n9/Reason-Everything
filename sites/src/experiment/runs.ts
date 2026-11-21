@@ -58,7 +58,7 @@ export function formatDeltaPp(deltaHundredths: number): string {
   return `${sign}${intPart}.${fracPart}`;
 }
 
-function cellAt(config: RunConfig, key: string): Cell | undefined {
+export function cellAt(config: RunConfig, key: string): Cell | undefined {
   if (key === "extras") return undefined;
   const direct = (config as Record<string, Cell | Record<string, Cell> | undefined>)[key];
   if (direct !== undefined && typeof direct !== "object") return direct as Cell;
