@@ -142,3 +142,13 @@
   - 1024/390/320：一律单列、堆叠顺序矩阵→当前证据→AI 分析→补跑/回填→版本记录单调、面板 20/20/16/16px（1024 档 20、手机 16）、首列 104/74/74px、格高 80/64/64px、三档均无横向滚动、节点横排窄屏换行。
 - **实测合计**：`cd sites && npm test` = **144/144 pass、exit 0**（10 文件，含本卡 7 例）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL）。
 - **未测/受限**：真实模型调用未执行（QODER_PAT 明确确认仍缺；无权限/额度不足的具体错误码不可在本机产生，其显示与重试路径已由 adapter_error 同路径覆盖）；浏览器截图未获取（in-app 浏览器无可视表面 NATIVE_BROWSER_VIEWPORT_UNAVAILABLE，验收以 DOM 结构/坐标数据留证）；`tsc` 未跑（依赖冻结）。**下一卡**：11。
+
+## 卡 12 · 记录比赛交付与发布验收（2026-11-22）
+
+- **交付**：根 `README.md` 重写开头——评委 4 步上手（含站点入口与受邀访问实况）、真实命令表（`npm test` / `npm run verify:flow` / `npm run build:web` / `node scripts/serve-web.mjs 8321`）、所需平台能力表（静态托管已启用、本机保存已启用、托管数据库与真实模型未接通及原因）、演示数据声明（仅虚构标注数据）；新增 `sites/docs/release-12.md`（60 秒演示词分段计时+数据来源标注+CSV 附录、Qoder 使用记录、验收五项、真实模型/云存储接入入口）。发布物核查：`sites/web/` 构建无个人笔记/旧 PDF/ledger.db/凭据/原始模型日志（全仓 git ls-files 扫描通过；旧静态资源 app.js 内唯一 token 命中为「0 tokens」UI 文案），favicon/vendor/gen/study.* 与 `.AgentFlow.qoder.site` 平台标识保留；本地仅 `sites/` 一个活跃参赛目录、一套站点入口（research-brief 绑定未动）。
+- **本机与站点流程验收（真·空站点 127.0.0.1:8321，新建「演示项目」）**：主张「数据增强使准确率提高了 2 个百分点」→ 只给 R01/R02（80.0/82.0）→ 目标学习率 0.01 → 分析 → **0.01/关=建议补跑**（复制 R02 仅改 augmentation，目标对照缺失）+ 观测差 +2.00 个百分点 + AI 区如实「AI 未接通（模型服务不可用）」+ 规则解释可用 → 录入演示 R03=81.8（◇演示，显式加载）→ V2：0.01/关=81.8%R03、**同条件配对差 +0.20 个百分点**（与观测 +2.00 分列）→ 切回 V1：缺口与补跑建议原样保留。存储=本机保存（IndexedDB），刷新后 2 版本+矩阵数值完整恢复。
+- **发布（平台流程，用户批准后执行）**：Sites 草稿打包→就绪（artifactReady/dependenciesReady、无 blockers）→用户确认「批准发布 / 保持仅受邀」→ 发布 → `published=true`（同站更新，地址不变 https://agentflow-jdu3pw2qe8r.qoder.website；仅目标站点，research-brief 站未动、未改名、未公开）。
+- **访客实测（发布后真实网址）**：匿名访客见 Qoder 访问门槛页（「登录后即可访问 / 此站点仅向受邀用户开放」）——访问范围按用户决定保持 selected（受邀列表为空）；**访客端核心流程未能匿名走通**，评委需受邀 Qoder 账号。核心流程已在同一构建物本机全流程实测。
+- **真实模型与云存储（分开如实）**：真实模型**未接通**（backend=disabled、functions=[]、QODER_PAT 未配置），AI 区显示「AI 未接通」+确定性规则报告，未以 mock 冒充；云存储**未启用**（storage=disabled），保存模式真实为「本机保存」。接入入口：站点设置启用后端（PAT 自动创建需持有者平台确认，密钥不进聊天）→ 部署 functions/app → 可选数据库 schemaRef 迁移。
+- **验收五项**：① 站点=已发布 https://agentflow-jdu3pw2qe8r.qoder.website（同构建物本机 8321）；② 核心流程=主张→R01/R02→目标学习率→缺口/补跑单→R03→+0.20→切回 V1（本机实测通过）；③ 真实模型=未接通（如实显示）；④ 存储=本机保存+刷新恢复实测 ok；⑤ 未完成=访客匿名流程（受邀门槛）、真实模型、云存储、截图。
+- **实测合计**：`cd sites && npm test` = 144/144 exit 0（卡 10 后复跑）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL）；发布核验 published=true；访客门槛页实测。**下一卡**：无（本卡为发布收尾卡）。
