@@ -3,3 +3,4 @@ dist/
 .deno/
 *.log
 tests/harness/js/
+web/assets/gen/

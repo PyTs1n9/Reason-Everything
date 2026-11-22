@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "verify:flow": "node scripts/verify-flow.ts"
+    "verify:flow": "node scripts/verify-flow.ts",
+    "build:web": "node scripts/build-web.mjs"
   }
 }

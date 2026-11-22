@@ -170,6 +170,8 @@ export interface DataService {
     input: { questionId: string; projectId: string; rawClaim: string; confirmedClaim: Question["confirmedClaim"]; now: string },
   ): Promise<Question>;
   getQuestion(actor: Actor, questionId: string): Promise<Question | null>;
+  /** 项目内问题列表（按创建顺序）。 */
+  listQuestions(actor: Actor, projectId: string): Promise<Question[]>;
   listRevisions(actor: Actor, questionId: string): Promise<AnalysisRevision[]>;
   getRevision(actor: Actor, questionId: string, revisionId: string): Promise<AnalysisRevision | null>;
 
@@ -320,6 +322,12 @@ export function createDataService(backend: StorageBackend): DataService {
       const state = await backend.read(actor);
       const question = state.questions.find((q) => q.questionId === questionId);
       return question ? clone(question) : null;
+    },
+
+    async listQuestions(actor, projectId) {
+      const state = await backend.read(actor);
+      requireProject(state, projectId);
+      return clone(state.questions.filter((q) => q.projectId === projectId));
     },
 
     async listRevisions(actor, questionId) {

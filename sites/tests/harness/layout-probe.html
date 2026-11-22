@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>布局探针（测试台，非产品页面）</title>
+    <style>
+      body { margin: 0; font: 13px/20px system-ui, sans-serif; background: #eee; }
+      .row { margin: 8px; }
+      .row strong { display: inline-block; width: 90px; }
+      iframe { border: 1px solid #999; background: #fff; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <div class="row"><strong>1440×900</strong><iframe id="f1440" src="/web/index.html" width="1440" height="900"></iframe></div>
+    <div class="row"><strong>1024×768</strong><iframe id="f1024" src="/web/index.html" width="1024" height="768"></iframe></div>
+    <div class="row"><strong>390×844</strong><iframe id="f390" src="/web/index.html" width="390" height="844"></iframe></div>
+    <div class="row"><strong>320×700</strong><iframe id="f320" src="/web/index.html" width="320" height="700"></iframe></div>
+  </body>
+</html>

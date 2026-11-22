@@ -402,3 +402,22 @@ test("作业状态可变、证据快照定稿：模型重试只用 V1 原始快�
   const inputAgain = await svc.getModelInput(ALICE, "rev_0001");
   assert.equal(inputAgain.runs.length, 2, "返回克隆，外部修改不污染快照");
 });
+
+test("listQuestions 按项目返回问题且他人项目报 NotFound", async () => {
+  const svc = svcOf(new MemoryBackend());
+  await svc.createProject(ALICE, "P1", T0, "p_1");
+  await svc.createProject(ALICE, "P2", T0, "p_2");
+  await svc.createQuestion(ALICE, {
+    questionId: "q1", projectId: "p_1", rawClaim: "a", confirmedClaim: null, now: T1,
+  });
+  await svc.createQuestion(ALICE, {
+    questionId: "q2", projectId: "p_1", rawClaim: "b", confirmedClaim: null, now: T1,
+  });
+  await svc.createQuestion(ALICE, {
+    questionId: "q3", projectId: "p_2", rawClaim: "c", confirmedClaim: null, now: T1,
+  });
+  const list = await svc.listQuestions(ALICE, "p_1");
+  assert.deepEqual(list.map((q) => q.questionId), ["q1", "q2"]);
+  await assert.rejects(svc.listQuestions(BOB, "p_1"), NotFoundError);
+  await assert.rejects(svc.listQuestions(ALICE, "p_missing"), NotFoundError);
+});
