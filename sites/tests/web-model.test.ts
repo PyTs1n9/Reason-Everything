@@ -93,3 +93,83 @@ test("状态与模型输出用文字+形状表达", () => {
   assert.equal(modelGlyph("unavailable").text, "AI 未接通");
   assert.equal(modelGlyph("ready").glyph, "●");
 });
+
+// ---------- 问题详情矩阵（卡 10） ----------
+
+import { buildEvidencePackage } from "../src/experiment/evidence.ts";
+import type { ClaimSpec } from "../src/experiment/types.ts";
+import { demoInitialRuns, demoQuestion } from "./fixtures/experiment-demo.ts";
+import { buildQuestionMatrix, formatAccuracy } from "../src/web/model.ts";
+
+const CTX = { projectId: "p_demo", questionId: "q_demo_0001" };
+
+const TARGET_CLAIM: ClaimSpec = {
+  factor: "augmentation",
+  metric: "accuracy",
+  targetRunId: "R02",
+  baselineRunId: "R01",
+  scope: "target_lr",
+  learningRates: [0.001, 0.01],
+  expectedDeltaPp: 2,
+};
+
+function cellOf(cells: ReturnType<typeof buildQuestionMatrix>["cells"], lr: number, aug: string) {
+  const hit = cells.find((c) => c.lr === lr && c.augmentation === aug);
+  assert.ok(hit, `缺少格子 ${lr}/${aug}`);
+  return hit!;
+}
+
+test("V1 矩阵四格逐格核对：R01 实测、0.001/开未跑、0.01/关建议补跑、R02 实测", () => {
+  const pkg = buildEvidencePackage(TARGET_CLAIM, demoInitialRuns, CTX);
+  const matrix = buildQuestionMatrix(TARGET_CLAIM, demoInitialRuns, pkg);
+
+  assert.deepEqual(matrix.lrs, [0.001, 0.01], "学习率升序");
+  assert.deepEqual(matrix.fixedConditions, { model: "M1", evalSplit: "S1:v1", seed: "7" });
+
+  const a = cellOf(matrix.cells, 0.001, "off");
+  assert.equal(a.state, "measured");
+  assert.equal(a.runId, "R01");
+  assert.equal(formatAccuracy(a.accuracy!), "80.0%");
+
+  const b = cellOf(matrix.cells, 0.001, "on");
+  assert.equal(b.state, "empty");
+  assert.equal(b.runId, null);
+
+  const c = cellOf(matrix.cells, 0.01, "off");
+  assert.equal(c.state, "suggested");
+  assert.equal(c.accuracy, null, "待补格不得显示数值");
+  assert.ok(c.cellId && c.cellId.includes("0.01:off"), "建议格应带 cellId");
+
+  const d = cellOf(matrix.cells, 0.01, "on");
+  assert.equal(d.state, "measured");
+  assert.equal(d.runId, "R02");
+  assert.equal(formatAccuracy(d.accuracy!), "82.0%");
+});
+
+test("两档范围后 0.001/开 也变为建议补跑", () => {
+  const claimBoth = demoQuestion.confirmedClaim!;
+  const pkg = buildEvidencePackage(claimBoth, demoInitialRuns, CTX);
+  const matrix = buildQuestionMatrix(claimBoth, demoInitialRuns, pkg);
+  assert.equal(cellOf(matrix.cells, 0.001, "on").state, "suggested");
+  assert.equal(cellOf(matrix.cells, 0.01, "off").state, "suggested");
+  assert.equal(cellOf(matrix.cells, 0.001, "off").state, "measured");
+  assert.equal(cellOf(matrix.cells, 0.01, "on").state, "measured");
+});
+
+test("学习率输入乱序也按升序输出；空数据全为未跑且固定条件为占位", () => {
+  const shuffled: ClaimSpec = { ...TARGET_CLAIM, learningRates: [0.01, 0.001] };
+  const pkg = buildEvidencePackage(shuffled, demoInitialRuns, CTX);
+  const matrix = buildQuestionMatrix(shuffled, demoInitialRuns, pkg);
+  assert.deepEqual(matrix.lrs, [0.001, 0.01]);
+
+  const emptyPkg = buildEvidencePackage(TARGET_CLAIM, [], CTX);
+  const emptyMatrix = buildQuestionMatrix(TARGET_CLAIM, [], emptyPkg);
+  assert.equal(emptyMatrix.cells.every((c) => c.state === "empty"), true);
+  assert.deepEqual(emptyMatrix.fixedConditions, { model: "—", evalSplit: "—", seed: "—" });
+});
+
+test("长运行名与格式化：accuracy 始终一位小数百分数", () => {
+  assert.equal(formatAccuracy(82), "82.0%");
+  assert.equal(formatAccuracy(81.8), "81.8%");
+  assert.equal(formatAccuracy(80), "80.0%");
+});

@@ -524,3 +524,44 @@ test("动作清单：12 个动作齐备且请求样例指向真实方法", () =>
     assert.ok(example.example.length > 0);
   }
 });
+
+test("更改问题范围 → 同问题新版本；旧版本范围不变；过期父版本被拒", async () => {
+  const { wf, mock } = makeWorkflow(true);
+  const { questionId } = await seedClaimAndRuns(wf, mock);
+  const v1 = await wf.analyze(ALICE, { requestId: "req-scope-1", questionId });
+  assert.equal(v1.gated, false);
+  if (v1.gated) return;
+  assert.equal(v1.evidence.coverage.requiredLrs.length, 2, "初始为两档");
+
+  const targetClaim: ClaimSpec = { ...CLAIM, scope: "target_lr" };
+  const v1Revision = await wf.getRevision(ALICE, questionId, v1.revisionId);
+  const targetPkg = buildEvidencePackage(targetClaim, v1Revision!.inputSnapshot.runs, CTX);
+  mock.analyzeSteps = [{ text: validAnalysisText(targetPkg, targetClaim) }];
+
+  const changed = await wf.changeScope(ALICE, {
+    questionId,
+    scope: "target_lr",
+    requestId: "req-scope-2",
+  });
+  assert.equal(changed.gated, false);
+  if (changed.gated) return;
+  assert.equal(changed.evidence.coverage.requiredLrs.length, 1, "改范围后只查目标档");
+
+  const versions = await wf.listRevisions(ALICE, questionId);
+  assert.equal(versions.length, 2);
+  assert.equal(versions[1]!.parentId, v1.revisionId);
+  assert.equal(versions[1]!.inputSnapshot.claim.scope, "target_lr");
+  assert.equal(versions[0]!.inputSnapshot.claim.scope, "both_lrs", "V1 保留原范围与缺口");
+
+  await assert.rejects(
+    wf.changeScope(ALICE, { questionId, scope: "both_lrs", requestId: "req-scope-3", expectedParentId: null }),
+    (error: unknown) => error instanceof ConflictError && error.code === "stale_parent",
+  );
+  assert.equal((await wf.listRevisions(ALICE, questionId)).length, 2, "冲突不产生版本");
+
+  const draft = await wf.createQuestion(ALICE, { projectId: "p_demo", rawClaim: SENTENCE });
+  await assert.rejects(
+    wf.changeScope(ALICE, { questionId: draft.questionId, scope: "target_lr", requestId: "req-scope-4" }),
+    (error: unknown) => String((error as { code?: string }).code) === "needs_claim",
+  );
+});

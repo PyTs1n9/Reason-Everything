@@ -421,3 +421,37 @@ test("listQuestions 按项目返回问题且他人项目报 NotFound", async () 
   await assert.rejects(svc.listQuestions(BOB, "p_1"), NotFoundError);
   await assert.rejects(svc.listQuestions(ALICE, "p_missing"), NotFoundError);
 });
+
+test("listJobs 按问题返回，跨访问者拒绝", async () => {
+  const svc = svcOf(new MemoryBackend());
+  await svc.createProject(ALICE, "P", T0, "p_1");
+  await svc.createQuestion(ALICE, {
+    questionId: "qj1", projectId: "p_1", rawClaim: "x", confirmedClaim: null, now: T1,
+  });
+  await svc.createQuestion(ALICE, {
+    questionId: "qj2", projectId: "p_1", rawClaim: "y", confirmedClaim: null, now: T1,
+  });
+  await svc.putJob(ALICE, { jobId: "j1", questionId: "qj1", revisionId: null, status: "queued" });
+  await svc.putJob(ALICE, { jobId: "j2", questionId: "qj2", revisionId: null, status: "queued" });
+  const jobs = await svc.listJobs(ALICE, "qj1");
+  assert.deepEqual(jobs.map((j) => j.jobId), ["j1"]);
+  await assert.rejects(svc.listJobs(BOB, "qj1"), NotFoundError);
+  await assert.rejects(svc.listJobs(ALICE, "q_missing"), NotFoundError);
+});
+
+test("updateClaim 更新范围并重算状态，可反复更新", async () => {
+  const svc = svcOf(new MemoryBackend());
+  await svc.createProject(ALICE, "P", T0, "p_demo");
+  await importCsv(svc, ALICE, CSV_INITIAL, T1);
+  await svc.createQuestion(ALICE, {
+    questionId: "q_uc", projectId: "p_demo", rawClaim: demoQuestion.rawClaim, confirmedClaim: null, now: T1,
+  });
+  const claim1 = { ...demoQuestion.confirmedClaim!, scope: "target_lr" as const };
+  const updated = await svc.updateClaim(ALICE, "q_uc", claim1, T2);
+  assert.equal(updated.confirmedClaim?.scope, "target_lr");
+  assert.equal(updated.status, "waiting_for_run", "有数据时按新主张重算状态");
+  const claim2 = { ...demoQuestion.confirmedClaim! };
+  const updated2 = await svc.updateClaim(ALICE, "q_uc", claim2, T3);
+  assert.equal(updated2.confirmedClaim?.scope, "both_lrs");
+  await assert.rejects(svc.updateClaim(BOB, "q_uc", claim2, T3), NotFoundError);
+});

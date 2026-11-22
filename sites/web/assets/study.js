@@ -3,10 +3,15 @@
 import { createIndexedDBBackend, LOCAL_STORAGE_LABEL } from "./gen/src/experiment/storage-indexeddb.js";
 import { createDataService } from "./gen/src/experiment/storage.js";
 import { createWorkflowService } from "./gen/src/workflow/service.js";
+import { buildEvidencePackage } from "./gen/src/experiment/evidence.js";
+import { validateAccuracy } from "./gen/src/experiment/runs.js";
+import { buildFactRegistry } from "./gen/src/agent/facts.js";
 import {
+  buildQuestionMatrix,
   deriveLrOptions,
   evaluateEntryMissing,
   filterProjects,
+  formatAccuracy,
   formatUpdatedAt,
   modelGlyph,
   statusGlyph,
@@ -17,7 +22,11 @@ const ACTOR = { userId: "local" };
 
 const backend = createIndexedDBBackend(indexedDB, DB_NAME);
 const data = createDataService(backend);
-const wf = createWorkflowService({ storage: data, agent: null, now: () => new Date().toISOString() });
+const wfDeps = { storage: data, agent: null, now: () => new Date().toISOString() };
+const wf = createWorkflowService(wfDeps);
+// 验收驱动口：仅允许注入模型适配器（wfDeps.agent 生产恒为 null=未接通），供离线 mock 驱动 UI 验收；
+// 注入的输出以 provider=mock 标识展示，不冒充真实模型输出。
+globalThis.__agentflow = { wfDeps };
 
 const main = document.getElementById("main");
 const sidebar = document.getElementById("sidebar");
@@ -981,57 +990,1109 @@ async function renderNewQuestion(projectId) {
   if (entry.dataText) runPreview();
 }
 
-// ---------- 视图 4：问题详情 ----------
+// ---------- 视图 4：问题详情（卡 10） ----------
+
+const qView = {
+  questionId: null,
+  revisionId: null,
+  selectedKey: null,
+  highlightKeys: [],
+  selectedEvidenceId: null,
+  statusText: "",
+  statusIsError: false,
+  autoSelectNewSuggested: null,
+  projectIdForDrawer: null,
+  drawer: null,
+  parseDone: false,
+  updateSteps: null,
+};
+
+const STEP_LABELS = [
+  { kind: "parse", label: "解析主张" },
+  { kind: "snapshot", label: "核对配置" },
+  { kind: "rules", label: "查找对照" },
+  { kind: "model", label: "模型分析" },
+];
+const STEP_TEXT = { pending: "待运行", running: "运行中", done: "完成", failed: "失败" };
+const STEP_GLYPH = { pending: "○", running: "◐", done: "●", failed: "✕" };
+
+function nodeStepState(node, events, parseDone) {
+  if (node === "parse") return parseDone ? "done" : "pending";
+  const evs = events.filter((e) => e.node === node);
+  if (evs.some((e) => e.status === "failed")) return "failed";
+  if (evs.some((e) => e.status === "completed")) return "done";
+  if (evs.some((e) => e.status === "started")) return "running";
+  return "pending";
+}
+
+/** 立即渲染真实等待/错误状态（不等分析结束才显示）。 */
+function showStatus(text, isError = false) {
+  qView.statusText = text;
+  qView.statusIsError = isError;
+  let node = document.getElementById("qStatus");
+  if (!node) {
+    node = h("div", { id: "qStatus", role: "status" });
+    const stepsNode = document.getElementById("steps");
+    if (stepsNode && stepsNode.isConnected) stepsNode.after(node);
+    else main.append(node);
+  }
+  node.className = isError ? "notice notice-error" : "notice";
+  node.textContent = text;
+}
+
+/** 异步操作期间按 job 事件刷新步骤行（运行中/失败等来自真实事件）。 */
+function watchStepsWhile(questionId, promise) {
+  const timer = setInterval(() => {
+    wf.listJobs(ACTOR, questionId)
+      .then(async (jobs) => {
+        const latest = jobs.length > 0 ? jobs[jobs.length - 1] : null;
+        const events = latest ? (await wf.getJob(ACTOR, latest.jobId)).events : [];
+        if (qView.updateSteps) qView.updateSteps(events);
+      })
+      .catch((error) => {
+        clearInterval(timer);
+        showStatus(`节点状态刷新失败：${error && error.message ? error.message : String(error)}`, true);
+      });
+  }, 250);
+  return promise.finally(() => clearInterval(timer));
+}
+
+function augLabel(augmentation) {
+  return augmentation === "off" ? "关" : "开";
+}
+
+function cellKeyOf(lr, augmentation) {
+  return `${lr}|${augmentation}`;
+}
+
+let renderSeq = 0;
 
 async function renderQuestion(questionId) {
+  const seq = ++renderSeq;
+  clear(main);
   const question = await data.getQuestion(ACTOR, questionId);
+  if (seq !== renderSeq) return;
   if (!question) throw new Error(`问题不存在: ${questionId}`);
   const project = await data.getProject(ACTOR, question.projectId);
 
-  const head = h("div", { class: "page-head" },
-    h("div", { class: "field", style: "gap:6px" },
-      h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
-      h("h1", { text: question.rawClaim || "(未填主张)" }),
-    ),
-    badge(question.status),
-  );
-
-  const claim = question.confirmedClaim;
-  const detail = h("div", { class: "detail-list" },
-    h("dl", { class: "detail-grid" },
-      h("dt", { text: "问题编号" }),
-      h("dd", { text: question.questionId, id: "questionIdValue" }),
-      h("dt", { text: "项目" }),
-      h("dd", { text: project ? project.name : question.projectId }),
-      h("dt", { text: "结构化主张" }),
-      h("dd", {
-        text: claim
-          ? `${claim.factor} / ${claim.metric} / 范围 ${claim.scope === "both_lrs" ? "两档" : "目标档"} / 学习率 ${claim.learningRates.join("、")} / 增幅 ${claim.expectedDeltaPp === null ? "未指定" : `${claim.expectedDeltaPp} 个百分点`} / 目标 ${claim.targetRunId} vs 基线 ${claim.baselineRunId}`
-          : "尚未确认（待补充）",
-      }),
-      h("dt", { text: "当前状态" }),
-      h("dd", {}, badge(question.status)),
-    ),
-  );
-
-  const versionsHost = h("div", { id: "versionHost" });
-  main.append(head, detail, versionsHost);
+  if (qView.questionId !== questionId) {
+    closeDrawer(false);
+    Object.assign(qView, {
+      questionId,
+      revisionId: null,
+      selectedKey: null,
+      highlightKeys: [],
+      selectedEvidenceId: null,
+      statusText: "",
+      statusIsError: false,
+      autoSelectNewSuggested: null,
+    });
+  }
+  qView.projectIdForDrawer = question.projectId;
 
   const versions = await wf.listRevisions(ACTOR, questionId);
-  clear(versionsHost);
-  if (versions.length === 0) {
-    versionsHost.append(h("div", { class: "empty" }, h("p", { text: "还没有分析版本" })));
-    return;
+  const jobs = await wf.listJobs(ACTOR, questionId);
+
+  if (qView.revisionId && !versions.some((v) => v.revisionId === qView.revisionId)) {
+    qView.revisionId = null;
   }
-  versionsHost.append(h("h2", { text: `分析版本（${versions.length}）` }));
-  for (const version of [...versions].reverse()) {
-    versionsHost.append(
-      h("div", { class: "version-item", dataset: { revisionId: version.revisionId } },
-        h("div", {}, h("strong", { text: shortId(version.revisionId) }), ` · 父版本 ${version.parentId ? shortId(version.parentId) : "无"} · ${formatUpdatedAt(version.createdAt)}`),
-        h("div", {}, modelBadge(version.modelOutput), ` · 输入运行 ${version.inputSnapshot.runs.map((r) => r.runId).join("、") || "无"} · 结论 ${version.conclusions.length} 条`),
-      ),
+  const current =
+    versions.find((v) => v.revisionId === qView.revisionId) ?? versions[versions.length - 1] ?? null;
+  if (current) qView.revisionId = current.revisionId;
+
+  // 节点事件：优先正在运行的作业，其次当前查看版本的作业，最后最新作业
+  const liveJob = jobs.find((j) => j.status === "queued" || j.status === "running") ?? null;
+  const viewedJob = current ? (jobs.find((j) => j.revisionId === current.revisionId) ?? null) : null;
+  const stepsJob = liveJob ?? viewedJob ?? (jobs.length > 0 ? jobs[jobs.length - 1] : null);
+  const events = stepsJob ? (await wf.getJob(ACTOR, stepsJob.jobId)).events : [];
+
+  // —— 顶部：返回项目 → 原主张（可换行）→ 范围/版本选择/分析状态 ——
+  const scopeText = question.confirmedClaim
+    ? question.confirmedClaim.scope === "both_lrs"
+      ? `两档（${question.confirmedClaim.learningRates.join("、")}）`
+      : "目标学习率"
+    : "未明确（待澄清）";
+
+  const meta = h("div", { class: "q-meta" },
+    h("span", { class: "field-inline" }, h("strong", { text: "当前范围：" }), scopeText),
+  );
+
+  if (question.confirmedClaim && versions.length > 0) {
+    const scopeSelect = h("select", { id: "scopeSelect", "aria-label": "更改问题范围" },
+      h("option", { value: "both_lrs", text: "两档" }),
+      h("option", { value: "target_lr", text: "目标学习率" }),
+    );
+    scopeSelect.value = question.confirmedClaim.scope;
+    scopeSelect.addEventListener("change", () => doChangeScope(scopeSelect.value));
+    meta.append(
+      h("label", { class: "field-inline", for: "scopeSelect", text: "更改范围：" }),
+      scopeSelect,
     );
   }
+
+  if (versions.length > 0) {
+    const versionSelect = h("select", { id: "versionSelect", "aria-label": "版本选择器" });
+    versions.forEach((version, index) => {
+      versionSelect.append(
+        h("option", {
+          value: version.revisionId,
+          text: `V${index + 1} · ${shortId(version.revisionId)} · ${formatUpdatedAt(version.createdAt)}`,
+        }),
+      );
+    });
+    versionSelect.value = current.revisionId;
+    versionSelect.addEventListener("change", () => {
+      qView.revisionId = versionSelect.value;
+      renderQuestion(questionId);
+    });
+    meta.append(h("label", { class: "field-inline", for: "versionSelect", text: "版本：" }), versionSelect);
+  }
+
+  meta.append(badge(question.status));
+  if (current) meta.append(modelBadge(current.modelOutput));
+
+  const head = h("div", { class: "q-header" },
+    h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
+    h("h1", { class: "q-claim", text: question.rawClaim || "(未填主张)" }),
+    h("div", { class: "q-meta" },
+      h("span", { class: "field-inline", id: "questionIdValue", text: `问题编号 ${question.questionId}` }),
+    ),
+    meta,
+  );
+
+  // —— 真实节点步骤（状态来自 job 事件，异步期间可原位刷新）——
+  qView.parseDone = !!question.confirmedClaim;
+  const steps = h("ol", { class: "steps", id: "steps", "aria-label": "分析节点" });
+  const fillSteps = (stepEvents) => {
+    clear(steps);
+    for (const { kind, label } of STEP_LABELS) {
+      const state = nodeStepState(kind, stepEvents, qView.parseDone);
+      steps.append(
+        h("li", { class: `step step-${state}`, dataset: { node: kind } },
+          h("span", { class: "glyph", "aria-hidden": "true", text: STEP_GLYPH[state] }),
+          h("span", { text: `${label} · ${STEP_TEXT[state]}` }),
+        ),
+      );
+    }
+  };
+  fillSteps(events);
+  qView.updateSteps = fillSteps;
+
+  if (seq !== renderSeq) return;
+  main.append(head, steps);
+
+  if (qView.statusText && seq === renderSeq) {
+    main.append(
+      h("div", {
+        class: qView.statusIsError ? "notice notice-error" : "notice",
+        id: "qStatus",
+        role: "status",
+        text: qView.statusText,
+      }),
+    );
+  }
+
+  // —— 问题未明确：主操作是回答澄清，不展示矩阵 ——
+  if (!question.confirmedClaim) {
+    if (seq !== renderSeq) return;
+    main.append(renderClarifyPanel(question));
+    return;
+  }
+
+  if (!current) {
+    const startPanel = h("section", { class: "panel" },
+      h("h2", { text: "开始分析" }),
+      h("p", { class: "aux", text: "范围已确认，但还没有分析版本。" }),
+      h("button", {
+        class: "btn btn-primary",
+        type: "button",
+        id: "startAnalyze",
+        text: "开始分析",
+        onclick: async (event) => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          showStatus("正在分析…（读取快照 → 查找对照 → 请求模型，等待真实结果）");
+          try {
+            const result = await watchStepsWhile(
+              questionId,
+              wf.analyze(ACTOR, { requestId: `req-web-${Date.now()}`, questionId }),
+            );
+            if (result.gated) {
+              showStatus(result.reason, true);
+            } else {
+              qView.revisionId = result.revisionId;
+              showStatus(
+                `分析完成（作业 ${result.job.jobId}），模型输出：${modelGlyph(result.modelOutput).text}`,
+                result.modelOutput !== "ready",
+              );
+            }
+          } catch (error) {
+            showStatus(`分析失败：${error && error.message ? error.message : String(error)}`, true);
+          }
+          await renderQuestion(questionId);
+        },
+      }),
+    );
+    if (seq !== renderSeq) return;
+    main.append(startPanel);
+    return;
+  }
+
+  // —— 同一份 revision 数据渲染 ——
+  const claim = current.inputSnapshot.claim;
+  const runs = current.inputSnapshot.runs;
+  const pkg = buildEvidencePackage(claim, runs, { projectId: question.projectId, questionId });
+  const matrix = buildQuestionMatrix(claim, runs, pkg);
+  const registry = buildFactRegistry(pkg, claim);
+
+  // 矩阵面板
+  const fixed = h("div", { class: "fixed-conditions", "aria-label": "固定条件" },
+    h("span", { text: `模型 ${matrix.fixedConditions.model}` }),
+    h("span", { text: `评测集 ${matrix.fixedConditions.evalSplit}` }),
+    h("span", { text: `种子 ${matrix.fixedConditions.seed}` }),
+  );
+  const table = h("table", { class: "matrix", id: "matrixTable" },
+    h("colgroup", {}, h("col", { class: "c-lr" }), h("col"), h("col")),
+    h("thead", {},
+      h("tr", {},
+        h("th", { scope: "col", text: "学习率" }),
+        h("th", { scope: "col", text: "增强关" }),
+        h("th", { scope: "col", text: "增强开" }),
+      ),
+    ),
+  );
+  const tbody = h("tbody");
+  const cellButtons = new Map();
+  for (const lr of matrix.lrs) {
+    const row = h("tr", {}, h("th", { scope: "row", text: String(lr) }));
+    for (const augmentation of ["off", "on"]) {
+      const cell = matrix.cells.find((c) => c.lr === lr && c.augmentation === augmentation);
+      const key = cellKeyOf(lr, augmentation);
+      const button = h("button", {
+        type: "button",
+        class: "cell-btn",
+        dataset: { cellKey: key },
+        "aria-pressed": "false",
+        "aria-label": `学习率 ${lr}，增强${augLabel(augmentation)}，${cell.state === "measured" ? `实测 ${formatAccuracy(cell.accuracy)}` : cell.state === "suggested" ? "建议补跑" : "未跑"}`,
+      });
+      if (cell.state === "measured") {
+        button.append(
+          h("span", { class: "val", text: formatAccuracy(cell.accuracy) }),
+          h("span", { class: "sub", text: cell.runId }),
+        );
+      } else if (cell.state === "suggested") {
+        button.append(h("span", { class: "val suggested-text", text: "建议补跑" }), h("span", { class: "sub", text: "待补" }));
+      } else {
+        button.append(h("span", { class: "val muted", text: "未跑" }), h("span", { class: "sub", text: "—" }));
+      }
+      button.addEventListener("click", () => selectCell(key));
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectCell(key);
+        }
+      });
+      cellButtons.set(key, button);
+      const td = h("td", { class: `state-${cell.state}`, dataset: { cellKey: key } }, button);
+      row.append(td);
+    }
+    tbody.append(row);
+  }
+  table.append(tbody);
+
+  const matrixPanel = h("section", { class: "panel", id: "matrixPanel", "aria-labelledby": "matrixTitle" },
+    h("h2", { id: "matrixTitle", text: "实验对照矩阵" }),
+    fixed,
+    pkg.unmetConditions.length > 0
+      ? h("div", { class: "notice", role: "status" },
+          h("strong", { text: "当前缺口" }),
+          h("ul", { class: "error-list" }, pkg.unmetConditions.map((c) => h("li", { text: c }))),
+        )
+      : null,
+    table,
+  );
+
+  // 当前证据面板
+  const detailHost = h("div", { id: "evidenceDetail", class: "evidence-detail" });
+  const evidenceList = h("ul", { class: "evidence-list", id: "evidenceList" });
+  const evidenceButtons = new Map();
+  for (const fact of registry.facts) {
+    const item = h("button", {
+      type: "button",
+      class: "evidence-item",
+      dataset: { factId: fact.factId },
+      "aria-pressed": "false",
+      text: factLabel(fact, pkg),
+    });
+    item.addEventListener("click", () => selectEvidence(fact.factId));
+    evidenceButtons.set(fact.factId, item);
+    evidenceList.append(h("li", {}, item));
+  }
+  const evidencePanel = h("section", { class: "panel", id: "evidencePanel", "aria-labelledby": "evidenceTitle" },
+    h("h2", { id: "evidenceTitle", text: "当前证据" }),
+    detailHost,
+    evidenceList,
+  );
+
+  // AI 分析面板（规则解释与模型草稿清晰区分）
+  const ruleBlock = h("div", { class: "rule-block" },
+    h("strong", { text: "规则解释（确定性计算，非模型生成）" }),
+    pkg.observation
+      ? h("p", { class: "aux", text: `原始观察：${pkg.observation.targetRunId} 与 ${pkg.observation.baselineRunId} 观测差 ${pkg.observation.deltaPp} 个百分点（两次运行${pkg.observation.configDiff.map((d) => ` 同时改 ${d.field}`).join("")}）` })
+      : h("p", { class: "aux", text: "原始观察：目标或基准运行缺失，无法给出观测差。" }),
+    pkg.pairs.length > 0
+      ? h("ul", { class: "plain-list" },
+          pkg.pairs.map((p) => h("li", { text: `已配对差 lr=${p.lr}：${p.treatedRunId} vs ${p.controlRunId}，差 ${p.deltaPp} 个百分点` })),
+        )
+      : h("p", { class: "aux", text: "已配对差：尚无同条件配对（增强贡献未知）。" }),
+    h("ul", { class: "plain-list" },
+      current.conclusions.map((c) => h("li", { text: `[${c.result}] ${c.ruleId}：${c.detail}` })),
+    ),
+  );
+
+  const analysis = await data.getAnalysis(ACTOR, current.revisionId);
+  if (seq !== renderSeq) return;
+  const modelEvent = [...events].reverse().find((e) => e.node === "model");
+  const aiBody = h("div", { class: "ai-body", id: "aiBody" });
+
+  if (current.modelOutput === "ready" && analysis) {
+    const sections = [
+      ["观察到什么", analysis.output.observation],
+      ["能否归因", analysis.output.interpretation],
+      ["下一步怎么做", analysis.output.nextAction],
+    ];
+    for (const [title, section] of sections) {
+      const citations = h("div", { class: "citations", "aria-label": `${title} 的证据引用` },
+        section.evidenceIds.map((id) =>
+          h("button", {
+            type: "button",
+            class: "citation",
+            text: shortId(id),
+            "aria-label": `证据引用 ${id}`,
+            onclick: () => selectEvidence(id),
+          }),
+        ),
+      );
+      aiBody.append(
+        h("div", { class: "ai-block" },
+          h("h3", { text: title }),
+          h("p", { text: section.text }),
+          citations,
+        ),
+      );
+    }
+    aiBody.append(
+      h("div", { class: "ai-block" },
+        h("h3", { text: "建议改写" }),
+        h("p", { class: "aux", text: `学生原句：${question.rawClaim}` }),
+        h("p", { text: analysis.output.revisedClaim.text }),
+        h("div", { class: "citations" },
+          analysis.output.revisedClaim.evidenceIds.map((id) =>
+            h("button", { type: "button", class: "citation", text: shortId(id), "aria-label": `证据引用 ${id}`, onclick: () => selectEvidence(id) }),
+          ),
+        ),
+      ),
+    );
+    aiBody.append(
+      h("p", { class: "model-meta", text: `模型标识：${analysis.provider} · ${analysis.model} · ${analysis.promptVersion} · 作业 ${viewedJob ? viewedJob.jobId : "—"} · 生成于 ${formatUpdatedAt(analysis.createdAt)}` }),
+    );
+  } else {
+    const reason = modelEvent && modelEvent.status === "failed" ? modelEvent.summary : `模型输出状态：${modelGlyph(current.modelOutput).text}`;
+    aiBody.append(
+      h("div", { class: "notice notice-error", role: "status" },
+        h("strong", { text: `AI 分析未完成（${modelGlyph(current.modelOutput).text}）` }),
+        h("p", { text: reason }),
+        h("p", { class: "aux", text: "矩阵与规则解释不受影响，可继续查看。" }),
+      ),
+      h("button", {
+        class: "btn",
+        type: "button",
+        id: "retryModel",
+        text: "重试模型分析",
+        onclick: async (event) => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          const viewedBefore = qView.revisionId;
+          showStatus("已重新提交模型作业…（等待真实模型响应，矩阵不受影响）");
+          try {
+            // 新 requestId：同 requestId 是幂等重建，不会真的重试
+            const retry = await watchStepsWhile(
+              questionId,
+              wf.analyze(ACTOR, { requestId: `req-retry-${Date.now()}`, questionId }),
+            );
+            if (retry.gated) {
+              showStatus(retry.reason, true);
+            } else if (qView.revisionId !== viewedBefore) {
+              showStatus(`重试完成（作业 ${retry.job.jobId}，新版本已写入历史）；你查看的版本未变`);
+            } else {
+              qView.revisionId = retry.revisionId;
+              showStatus(
+                `重试完成（作业 ${retry.job.jobId}）：${retry.modelOutput === "ready" ? "模型分析已生成" : `模型仍不可用（${modelGlyph(retry.modelOutput).text}），见上方原因`}`,
+                retry.modelOutput !== "ready",
+              );
+            }
+          } catch (error) {
+            showStatus(`重试失败：${error && error.message ? error.message : String(error)}`, true);
+          }
+          await renderQuestion(questionId);
+        },
+      }),
+    );
+  }
+
+  const aiPanel = h("section", { class: "panel", id: "aiPanel", "aria-labelledby": "aiTitle" },
+    h("h2", { id: "aiTitle", text: "AI 分析" }),
+    ruleBlock,
+    aiBody,
+  );
+
+  // 下一组实验
+  const nextBody = h("div", { id: "nextBody" });
+  if (pkg.suggestions.length === 0) {
+    nextBody.append(h("p", { class: "aux", text: "当前版本没有待补实验。" }));
+  } else {
+    for (const suggestion of pkg.suggestions) {
+      const changeText = suggestion.change.length
+        ? suggestion.change.map((c) => `${c.field}: ${String(c.from)} → ${String(c.to)}`).join("；")
+        : "无需变更配置";
+      nextBody.append(
+        h("div", { class: "suggestion-card", dataset: { cellId: suggestion.cellId } },
+          h("div", {}, h("strong", { text: "目标条件： " }), `lr=${suggestion.lr}，增强${augLabel(String(suggestion.augmentation))}`),
+          h("div", {}, h("strong", { text: "唯一变更： " }), changeText),
+          h("div", { class: "aux" }, `复制自 ${suggestion.copyFromRunId} · 以后与 ${suggestion.compareToRunId ?? `同档另一格 ${suggestion.cellId}`} 比较`),
+          h("div", { class: "suggestion-actions" },
+            h("button", { class: "btn", type: "button", text: "复制补跑配置", onclick: (e) => copySuggestion(suggestion, e.currentTarget) }),
+            h("button", { class: "btn", type: "button", text: "录入实测结果", onclick: (e) => openDrawer("backfill", suggestion, e.currentTarget) }),
+            h("button", { class: "btn", type: "button", text: "导入新增记录", onclick: (e) => openDrawer("import", null, e.currentTarget) }),
+          ),
+        ),
+      );
+    }
+  }
+  const nextPanel = h("section", { class: "panel", id: "nextPanel", "aria-labelledby": "nextTitle" },
+    h("h2", { id: "nextTitle", text: "下一组实验" }),
+    nextBody,
+  );
+
+  const layout = h("div", { class: "q-layout" },
+    h("div", { class: "q-col" }, matrixPanel, evidencePanel),
+    h("div", { class: "q-col" }, aiPanel, nextPanel),
+  );
+
+  // 版本记录（主体之下）
+  const versionList = h("div", { class: "version-list", id: "versionList" },
+    [...versions].reverse().map((version, reverseIndex) => {
+      const index = versions.length - reverseIndex;
+      const isCurrent = version.revisionId === current.revisionId;
+      const button = h("button", {
+        type: "button",
+        class: "btn",
+        text: isCurrent ? "正在查看" : "查看",
+        "aria-label": `查看 V${index}`,
+        onclick: () => {
+          qView.revisionId = version.revisionId;
+          renderQuestion(questionId);
+        },
+      });
+      return h("div", { class: "version-item", dataset: { revisionId: version.revisionId } },
+        h("div", {}, h("strong", { text: `V${index} · ${shortId(version.revisionId)}` }), ` · 父版本 ${version.parentId ? shortId(version.parentId) : "无"} · ${formatUpdatedAt(version.createdAt)}`),
+        h("div", {}, modelBadge(version.modelOutput), ` · 输入运行 ${version.inputSnapshot.runs.map((r) => r.runId).join("、") || "无"} · 结论 ${version.conclusions.length} 条`),
+        isCurrent ? button : h("span", {}, button),
+      );
+    }),
+  );
+  const versionsPanel = h("section", { class: "panel", id: "versionsPanel", "aria-labelledby": "versionsTitle" },
+    h("h2", { id: "versionsTitle", text: `版本记录（${versions.length}）` }),
+    versionList,
+  );
+
+  if (seq !== renderSeq) return;
+  main.append(layout, versionsPanel);
+
+  // —— 选择交互（不整页重绘，保留焦点）——
+  function applyCellClasses() {
+    for (const [key, button] of cellButtons) {
+      const selected = qView.selectedKey === key;
+      const linked = qView.highlightKeys.includes(key);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      const td = button.parentElement;
+      td.classList.toggle("selected", selected);
+      td.classList.toggle("linked", linked && !selected);
+    }
+    for (const [factId, item] of evidenceButtons) {
+      item.setAttribute("aria-pressed", qView.selectedEvidenceId === factId ? "true" : "false");
+    }
+  }
+
+  function updateEvidenceDetail() {
+    clear(detailHost);
+    if (qView.selectedEvidenceId) {
+      const fact = registry.facts.find((f) => f.factId === qView.selectedEvidenceId);
+      if (fact) {
+        detailHost.append(
+          h("p", { class: "detail-title", text: "证据说明" }),
+          h("p", { text: factLabel(fact, pkg) }),
+          h("p", { class: "aux", text: `编号 ${fact.factId}${fact.cellId ? ` · 关联格 ${fact.cellId}` : ""}${fact.runIds && fact.runIds.length ? ` · 关联运行 ${fact.runIds.join("、")}` : ""}` }),
+        );
+        return;
+      }
+    }
+    if (qView.selectedKey) {
+      const [lrText, augText] = qView.selectedKey.split("|");
+      const cell = matrix.cells.find((c) => String(c.lr) === lrText && c.augmentation === augText);
+      if (cell) {
+        if (cell.state === "measured" && cell.runId) {
+          const run = runs.find((r) => r.runId === cell.runId);
+          detailHost.append(
+            h("p", { class: "detail-title", text: `实测格 lr=${cell.lr} · 增强${augLabel(cell.augmentation)}` }),
+            run
+              ? h("dl", { class: "detail-grid" },
+                  h("dt", { text: "runId" }), h("dd", { text: run.runId }),
+                  h("dt", { text: "准确率" }), h("dd", { text: formatAccuracy(run.metrics.accuracy) }),
+                  h("dt", { text: "数据来源" }), h("dd", {}, sourceBadge(run.source)),
+                  h("dt", { text: "模型" }), h("dd", { text: String(run.config.model) }),
+                  h("dt", { text: "评测集" }), h("dd", { text: String(run.config.evalSplit) }),
+                  h("dt", { text: "种子" }), h("dd", { text: String(run.config.seed) }),
+                  h("dt", { text: "优化器" }), h("dd", { text: String(run.config.optimizer ?? "—") }),
+                  h("dt", { text: "轮数" }), h("dd", { text: String(run.config.epochs ?? "—") }),
+                  h("dt", { text: "学习率" }), h("dd", { text: String(run.config.lr) }),
+                  h("dt", { text: "增强" }), h("dd", { text: String(run.config.augmentation) }),
+                  h("dt", { text: "导入时间" }), h("dd", { text: run.metadata.importedAt }),
+                )
+              : h("p", { class: "aux", text: "原始行不在本版本快照中。" }),
+            run ? h("pre", { class: "raw-row", text: JSON.stringify(run, null, 2) }) : null,
+          );
+        } else if (cell.state === "suggested" && cell.cellId) {
+          const suggestion = pkg.suggestions.find((s) => s.cellId === cell.cellId);
+          detailHost.append(
+            h("p", { class: "detail-title", text: `待补格 lr=${cell.lr} · 增强${augLabel(cell.augmentation)}` }),
+            suggestion
+              ? h("dl", { class: "detail-grid" },
+                  h("dt", { text: "复制运行" }), h("dd", { text: suggestion.copyFromRunId }),
+                  h("dt", { text: "唯一变更" }), h("dd", { text: suggestion.change.map((c) => `${c.field}: ${String(c.from)} → ${String(c.to)}`).join("；") || "无需变更" }),
+                  h("dt", { text: "固定条件" }), h("dd", { text: suggestion.keepConditions.map((c) => `${c.field}=${String(c.value)}`).join("，") }),
+                  h("dt", { text: "以后比较" }), h("dd", { text: suggestion.compareToRunId ?? `同档另一格 ${suggestion.cellId}` }),
+                )
+              : h("p", { class: "aux", text: "该格待确认配置（见缺口说明），暂不能生成补跑单。" }),
+          );
+        } else {
+          detailHost.append(
+            h("p", { class: "detail-title", text: `空格 lr=${cell.lr} · 增强${augLabel(cell.augmentation)}` }),
+            h("p", { class: "aux", text: "未跑：本版本快照中没有该条件的运行，不显示任何推断值。" }),
+          );
+        }
+        return;
+      }
+    }
+    detailHost.append(h("p", { class: "aux", text: "选择矩阵格或右侧证据条目，在此查看配置、来源与说明。" }));
+  }
+
+  function selectCell(key) {
+    qView.selectedKey = key;
+    qView.highlightKeys = [];
+    qView.selectedEvidenceId = null;
+    applyCellClasses();
+    updateEvidenceDetail();
+  }
+
+  function selectEvidence(factId) {
+    const fact = registry.facts.find((f) => f.factId === factId);
+    if (!fact) return;
+    qView.selectedEvidenceId = factId;
+    qView.selectedKey = null;
+    qView.highlightKeys = evidenceTargetKeys(fact, pkg, matrix);
+    applyCellClasses();
+    updateEvidenceDetail();
+    const first = qView.highlightKeys[0];
+    if (first && cellButtons.get(first)) {
+      cellButtons.get(first).scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  applyCellClasses();
+  updateEvidenceDetail();
+
+  // 范围变化后：自动选中新出现的建议格（高亮另一空格）
+  if (qView.autoSelectNewSuggested) {
+    const previous = qView.autoSelectNewSuggested;
+    qView.autoSelectNewSuggested = null;
+    const newly = matrix.cells.find((c) => c.state === "suggested" && !previous.has(c.key));
+    if (newly && cellButtons.has(newly.key)) selectCell(newly.key);
+  }
+
+  async function doChangeScope(scope) {
+    const viewedBefore = qView.revisionId;
+    showStatus("正在更改范围并生成新版本…（读取快照 → 查找对照 → 请求模型）");
+    try {
+      const before = new Set(matrix.cells.filter((c) => c.state === "suggested").map((c) => c.key));
+      const result = await watchStepsWhile(
+        questionId,
+        wf.changeScope(ACTOR, {
+          questionId,
+          scope,
+          requestId: `req-scope-${Date.now()}`,
+          expectedParentId: question.currentRevisionId,
+        }),
+      );
+      if (result.gated) {
+        showStatus(result.reason, true);
+      } else if (qView.revisionId !== viewedBefore) {
+        showStatus(`范围更改完成，新版本已写入历史；你查看的版本未变（作业 ${result.job.jobId}）`);
+      } else {
+        qView.revisionId = result.revisionId;
+        qView.autoSelectNewSuggested = before;
+        showStatus(`范围已改为「${scope === "both_lrs" ? "两档" : "目标学习率"}」，已生成新版本（作业 ${result.job.jobId}）`);
+      }
+    } catch (error) {
+      showStatus(`范围更改失败：${error && error.message ? error.message : String(error)}`, true);
+    }
+    await renderQuestion(questionId);
+  }
+}
+
+function sourceBadge(source) {
+  return h("span", { class: "badge" },
+    h("span", { class: "shape", "aria-hidden": "true", text: source === "demo" ? "◇" : "●" }),
+    source === "demo" ? "演示" : "真实",
+  );
+}
+
+function factLabel(fact, pkg) {
+  switch (fact.kind) {
+    case "cell-measured": {
+      const cell = pkg.cells.find((c) => c.cellId === fact.cellId);
+      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : fact.cellId;
+      return `格 ${where}：${String(fact.runId ?? fact.value)} 实测 ${formatAccuracy(Number(fact.value))}`;
+    }
+    case "cell-missing": {
+      const cell = pkg.cells.find((c) => c.cellId === fact.cellId);
+      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : fact.cellId;
+      return `格 ${where}：未测（缺测值为 null）`;
+    }
+    case "pair":
+      return `配对差 lr=${pkg.pairs.find((p) => p.pairId === fact.factId)?.lr ?? "?"}：${(fact.runIds ?? []).join(" vs ")}，差 ${String(fact.value)} 个百分点`;
+    case "action":
+      return `补跑建议：${String(fact.value).slice(0, 80)}${String(fact.value).length > 80 ? "…" : ""}`;
+    case "condition":
+      return `缺口：${String(fact.value)}`;
+    case "run":
+      return `运行 ${String(fact.value)}`;
+    case "contribution":
+      return `增强贡献 ${String(fact.value)} 个百分点`;
+    case "number":
+      return fact.factId === "fact:obs-delta"
+        ? `原始观测差 ${String(fact.value)} 个百分点`
+        : `主张增幅 ${String(fact.value)} 个百分点`;
+    default:
+      return `${fact.factId}: ${String(fact.value ?? "")}`;
+  }
+}
+
+function evidenceTargetKeys(fact, pkg, matrix) {
+  const keysOfRuns = (runIds) =>
+    matrix.cells
+      .filter((c) => c.runId && runIds.includes(c.runId))
+      .map((c) => c.key);
+  if (fact.cellId) {
+    const cell = matrix.cells.find((c) => c.cellId === fact.cellId);
+    return cell ? [cell.key] : [];
+  }
+  if (fact.kind === "pair") {
+    const pair = pkg.pairs.find((p) => p.pairId === fact.factId);
+    return pair ? keysOfRuns([pair.treatedRunId, pair.controlRunId]) : [];
+  }
+  if (fact.runIds && fact.runIds.length > 0) return keysOfRuns(fact.runIds);
+  // 仅做引用→可视化链接（读证据包既有结构，不做配对/算术）：
+  if (fact.factId === "fact:obs-delta" && pkg.observation) {
+    return keysOfRuns([pkg.observation.targetRunId, pkg.observation.baselineRunId]);
+  }
+  if (fact.kind === "action") {
+    const suggestion = pkg.suggestions.find((s) => s.suggestionId === fact.factId);
+    const cell = suggestion ? matrix.cells.find((c) => c.cellId === suggestion.cellId) : null;
+    return cell ? [cell.key] : [];
+  }
+  return [];
+}
+
+// ---------- 澄清面板（问题未明确时的主操作） ----------
+
+function renderClarifyPanel(question) {
+  const runs = [];
+  const host = h("section", { class: "panel", id: "clarifyPanel", "aria-labelledby": "clarifyTitle" },
+    h("h2", { id: "clarifyTitle", text: "回答澄清，确认范围" }),
+    h("p", { class: "aux", text: "问题尚未明确。回答下面的范围问题后才会开始分析与矩阵。" }),
+  );
+
+  const datalistId = "clarifyRunIds";
+  const baselineInput = h("input", { type: "text", id: "clarifyBaseline", list: datalistId, autocomplete: "off", placeholder: "如 R01" });
+  const targetInput = h("input", { type: "text", id: "clarifyTarget", list: datalistId, autocomplete: "off", placeholder: "如 R02" });
+  const scopeName = "clarifyScope";
+  const lr1 = h("input", { type: "number", id: "clarifyLr1", step: "any", min: "0", placeholder: "如 0.001" });
+  const lr2 = h("input", { type: "number", id: "clarifyLr2", step: "any", min: "0", placeholder: "如 0.01" });
+  const status = h("p", { class: "aux", id: "clarifyStatus", role: "status" });
+
+  data.listRuns(ACTOR, question.projectId).then((projectRuns) => {
+    runs.push(...projectRuns);
+    const options = h("datalist", { id: datalistId },
+      projectRuns.map((r) => h("option", { value: r.runId })),
+    );
+    host.append(options);
+    const lrs = deriveLrOptions(projectRuns);
+    if (lrs.length >= 1) lr1.value = String(lrs[0]);
+    if (lrs.length >= 2) lr2.value = String(lrs[1]);
+    if (projectRuns.length === 0) {
+      host.append(h("p", { class: "aux", text: "项目暂无运行记录：请手动填写 runId 与两档学习率。" }));
+    }
+  });
+
+  host.append(
+    h("div", { class: "form-row" },
+      h("div", { class: "field" }, h("label", { for: "clarifyBaseline", text: "基线运行（对照）" }), baselineInput),
+      h("div", { class: "field" }, h("label", { for: "clarifyTarget", text: "目标运行" }), targetInput),
+    ),
+    h("div", { class: "field", role: "radiogroup", "aria-label": "问题范围" },
+      h("label", {}, h("input", { type: "radio", name: scopeName, value: "target_lr" }), "目标学习率"),
+      h("label", {}, h("input", { type: "radio", name: scopeName, value: "both_lrs" }), "两档"),
+    ),
+    h("div", { class: "form-row" },
+      h("div", { class: "field" }, h("label", { for: "clarifyLr1", text: "学习率一" }), lr1),
+      h("div", { class: "field" }, h("label", { for: "clarifyLr2", text: "学习率二" }), lr2),
+    ),
+    h("div", { class: "submit-row" },
+      h("button", { class: "btn btn-primary", type: "button", id: "clarifyConfirm", text: "确认范围并开始分析" }),
+      status,
+    ),
+  );
+
+  host.addEventListener("click", async (event) => {
+    const button = event.target.closest("#clarifyConfirm");
+    if (!button) return;
+    button.disabled = true;
+    status.textContent = "提交中…";
+    try {
+      const scopeInput = host.querySelector(`input[name="${scopeName}"]:checked`);
+      const proposal = {
+        factor: "augmentation",
+        metric: "accuracy",
+        scope: null,
+        expectedDeltaPp: null,
+        clarifyingQuestion: "",
+      };
+      const confirmed = await wf.confirmScope(ACTOR, {
+        questionId: question.questionId,
+        proposal,
+        source: "manual",
+        targetRunId: targetInput.value.trim(),
+        baselineRunId: baselineInput.value.trim(),
+        scope: scopeInput ? scopeInput.value : "",
+        learningRates: [Number(lr1.value), Number(lr2.value)],
+      });
+      if (!("question" in confirmed)) {
+        status.textContent = `${confirmed.detail}${confirmed.clarifyingQuestion ? ` 追问：${confirmed.clarifyingQuestion}` : ""}`;
+        button.disabled = false;
+        return;
+      }
+      const result = await wf.analyze(ACTOR, {
+        requestId: `req-web-${Date.now()}`,
+        questionId: question.questionId,
+      });
+      if (result.gated) {
+        status.textContent = result.reason;
+        button.disabled = false;
+        return;
+      }
+      qView.revisionId = result.revisionId;
+      qView.statusText = `范围已确认，分析状态：${result.status}`;
+      qView.statusIsError = false;
+      await renderQuestion(question.questionId);
+    } catch (error) {
+      status.textContent = `确认失败：${error && error.message ? error.message : String(error)}`;
+      button.disabled = false;
+    }
+  });
+
+  return host;
+}
+
+// ---------- 回填 / 导入抽屉 ----------
+
+function openDrawer(mode, suggestion, trigger) {
+  closeDrawer(false);
+  const overlay = h("div", { class: "drawer-overlay", id: "drawerOverlay" });
+  const drawer = h("aside", {
+    class: "drawer",
+    id: "drawer",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "drawerTitle",
+    tabindex: "-1",
+  });
+  qView.drawer = { mode, suggestion, trigger };
+
+  const status = h("p", { class: "aux", id: "drawerStatus", role: "status" });
+  const error = h("p", { class: "field-error", id: "drawerError", hidden: true });
+
+  if (mode === "backfill" && suggestion) {
+    const runIdInput = h("input", { type: "text", id: "fillRunId", autocomplete: "off", placeholder: "如 R03" });
+    const accuracyInput = h("input", { type: "number", id: "fillAccuracy", step: "0.01", min: "0", max: "100", placeholder: "必填，例如 81.8" });
+    const demoInput = h("input", { type: "checkbox", id: "fillDemo" });
+    const fixedInputs = suggestion.keepConditions.map((condition) => {
+      const input = h("input", { type: "text", value: String(condition.value), dataset: { field: condition.field } });
+      return { field: condition.field, input };
+    });
+
+    const demoBtn = h("button", { class: "btn", type: "button", id: "fillDemoBtn", text: "载入演示 R03（演示）" });
+    const confirmBtn = h("button", { class: "btn btn-primary", type: "button", id: "drawerConfirm", text: "确认导入" });
+    const cancelButton = h("button", { class: "btn", type: "button", id: "drawerCancel", text: "取消" });
+
+    drawer.append(
+      h("h2", { id: "drawerTitle", text: "录入实测结果（补跑回填）" }),
+      h("p", { class: "aux", text: `目标格 lr=${suggestion.lr}，增强${augLabel(String(suggestion.augmentation))}；复制自 ${suggestion.copyFromRunId}，仅该条件为变更项。` }),
+      h("div", { class: "field" }, h("label", { for: "fillRunId", text: "runId" }), runIdInput),
+      h("div", { class: "field" }, h("label", { for: "fillAccuracy", text: "实测准确率（0–100，必填）" }), accuracyInput, error),
+      h("div", { class: "field" },
+        h("label", {}, demoInput, " 标记为演示数据（demo）"),
+        demoBtn,
+      ),
+      h("div", { class: "field" },
+        h("span", { class: "aux", text: "固定条件（可核对）：" }),
+        ...fixedInputs.map(({ field, input }) =>
+          h("div", { class: "field", style: "flex-direction:row;align-items:center;gap:8px" },
+            h("label", { for: `fill-${field}`, text: field, style: "min-width:96px" }),
+            Object.assign(input, { id: `fill-${field}` }),
+          ),
+        ),
+      ),
+      h("div", { class: "drawer-actions" }, confirmBtn, cancelButton),
+      status,
+    );
+
+    demoBtn.addEventListener("click", () => {
+      runIdInput.value = "R03";
+      accuracyInput.value = "81.8";
+      demoInput.checked = true;
+      status.textContent = "已载入演示 R03（演示）；仍可修改后再确认。";
+    });
+
+    confirmBtn.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const runId = runIdInput.value.trim();
+      const accuracyRaw = accuracyInput.value.trim();
+      error.hidden = true;
+      accuracyInput.removeAttribute("aria-invalid");
+      runIdInput.removeAttribute("aria-invalid");
+
+      if (!runId) {
+        runIdInput.setAttribute("aria-invalid", "true");
+        error.hidden = false;
+        error.textContent = "请填写 runId";
+        runIdInput.focus();
+        return;
+      }
+      if (accuracyRaw === "") {
+        accuracyInput.setAttribute("aria-invalid", "true");
+        error.hidden = false;
+        error.textContent = "实测准确率必须由你填写，不会默认任何数值";
+        accuracyInput.focus();
+        return;
+      }
+      const accuracy = Number(accuracyRaw);
+      const accuracyError = validateAccuracy(accuracy);
+      if (accuracyError) {
+        accuracyInput.setAttribute("aria-invalid", "true");
+        error.hidden = false;
+        error.textContent = accuracyError;
+        accuracyInput.focus();
+        return;
+      }
+
+      const config = {};
+      for (const { field, input } of fixedInputs) {
+        const raw = input.value.trim();
+        if (raw === "") continue;
+        const numeric = Number(raw);
+        config[field] = ["seed", "epochs", "lr"].includes(field) && Number.isFinite(numeric) ? numeric : raw;
+      }
+      config.lr = suggestion.lr;
+      config.augmentation = suggestion.augmentation;
+
+      const run = {
+        runId,
+        projectId: qView.projectIdForDrawer ?? undefined,
+        config,
+        source: demoInput.checked ? "demo" : "real",
+        metrics: { accuracy },
+        metadata: {
+          importedAt: new Date().toISOString(),
+          ...(demoInput.checked ? { note: "演示数据" } : {}),
+        },
+      };
+      button.disabled = true;
+      status.textContent = "提交中…（补入记录 → 重新分析，等待真实结果）";
+      const questionIdAtOpen = qView.questionId;
+      try {
+        const result = await watchStepsWhile(
+          questionIdAtOpen,
+          wf.appendRunsAndReanalyze(ACTOR, {
+            requestId: `req-fill-${Date.now()}`,
+            questionId: questionIdAtOpen,
+            runs: [run],
+          }),
+        );
+        if (result.gated) {
+          status.textContent = result.reason;
+          button.disabled = false;
+          return;
+        }
+        closeDrawer(false);
+        if (qView.questionId === questionIdAtOpen) {
+          qView.revisionId = result.revisionId;
+          showStatus(`已回填 ${runId}，生成新版本（作业 ${result.job.jobId}）`);
+          await renderQuestion(questionIdAtOpen);
+          const select = document.getElementById("versionSelect");
+          if (select) select.focus();
+          else document.getElementById("main").focus();
+        }
+      } catch (err) {
+        status.textContent = `导入失败：${err && err.message ? err.message : String(err)}`;
+        button.disabled = false;
+      }
+    });
+  } else {
+    const textarea = h("textarea", { id: "importText", spellcheck: "false", placeholder: "runId,model,evalSplit,seed,lr,augmentation,optimizer,epochs,accuracy" });
+    const previewStatus = h("p", { class: "aux", id: "importPreviewStatus", role: "status" });
+    const previewBtn = h("button", { class: "btn", type: "button", id: "importPreview", text: "预览映射" });
+    const confirmButton = h("button", { class: "btn btn-primary", type: "button", id: "drawerConfirm", text: "确认导入", disabled: true });
+    const cancelButton = h("button", { class: "btn", type: "button", id: "drawerCancel", text: "取消" });
+    drawer.append(
+      h("h2", { id: "drawerTitle", text: "导入新增记录" }),
+      h("div", { class: "field" }, h("label", { for: "importText", text: "粘贴 CSV/TSV（首行表头）" }), textarea),
+      h("div", { class: "drawer-actions" }, previewBtn),
+      previewStatus,
+      h("div", { class: "drawer-actions" }, confirmButton, cancelButton),
+      status,
+    );
+
+    let preview = null;
+    previewBtn.addEventListener("click", async () => {
+      previewStatus.textContent = "预览中…";
+      try {
+        preview = await wf.previewImport(ACTOR, {
+          projectId: qView.projectIdForDrawer,
+          text: textarea.value,
+          importedAt: new Date().toISOString(),
+        });
+        if (preview.mapping.status !== "ok") {
+          previewStatus.textContent = `映射冲突：${preview.mapping.conflicts.map((c) => c.headers.join("、")).join("；")}`;
+          confirmButton.disabled = true;
+          return;
+        }
+        const errorText = preview.errors.slice(0, 3).map((e) => `行${e.row}列${e.column}: ${e.message}`).join("；");
+        previewStatus.textContent = `预览：新增 ${preview.added.length}，重复 ${preview.duplicates.length}，缺配置 ${preview.incomplete.length}，冲突 ${preview.conflicts.length}${preview.errors.length ? `；错误 ${errorText}` : ""}`;
+        confirmButton.disabled = preview.blocking;
+      } catch (err) {
+        previewStatus.textContent = `预览失败：${err && err.message ? err.message : String(err)}`;
+        confirmButton.disabled = true;
+      }
+    });
+
+    confirmButton.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!preview || preview.blocking) return;
+      const runsToCommit = [...preview.added, ...preview.incomplete];
+      if (runsToCommit.length === 0) {
+        status.textContent = "没有可导入的新记录";
+        return;
+      }
+      button.disabled = true;
+      status.textContent = "提交中…（补入记录 → 重新分析，等待真实结果）";
+      const questionIdAtOpen = qView.questionId;
+      try {
+        const result = await watchStepsWhile(
+          questionIdAtOpen,
+          wf.appendRunsAndReanalyze(ACTOR, {
+            requestId: `req-import-${Date.now()}`,
+            questionId: questionIdAtOpen,
+            runs: runsToCommit,
+          }),
+        );
+        if (result.gated) {
+          status.textContent = result.reason;
+          button.disabled = false;
+          return;
+        }
+        closeDrawer(false);
+        if (qView.questionId === questionIdAtOpen) {
+          qView.revisionId = result.revisionId;
+          showStatus(`已导入 ${runsToCommit.length} 条记录，生成新版本（作业 ${result.job.jobId}）`);
+          await renderQuestion(questionIdAtOpen);
+          const select = document.getElementById("versionSelect");
+          if (select) select.focus();
+          else document.getElementById("main").focus();
+        }
+      } catch (err) {
+        status.textContent = `导入失败：${err && err.message ? err.message : String(err)}`;
+        button.disabled = false;
+      }
+    });
+  }
+
+  drawer.addEventListener("click", (event) => {
+    if (event.target.closest("#drawerCancel")) closeDrawer();
+  });
+  overlay.addEventListener("click", () => closeDrawer());
+
+  const trap = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDrawer();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusables = drawer.querySelectorAll("button, input, textarea, select, a[href]");
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  drawer.addEventListener("keydown", trap);
+
+  document.body.append(overlay, drawer);
+  const initial = drawer.querySelector("input, textarea, button");
+  if (initial) initial.focus();
+}
+
+function closeDrawer(restoreFocus = true) {
+  const current = qView.drawer;
+  if (!current) return;
+  const overlay = document.getElementById("drawerOverlay");
+  const drawer = document.getElementById("drawer");
+  if (overlay) overlay.remove();
+  if (drawer) drawer.remove();
+  qView.drawer = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+async function copySuggestion(suggestion, button) {
+  const text = suggestion.keepConditions
+    .map((c) => `${c.field}=${String(c.value)}`)
+    .concat(suggestion.change.map((c) => `${c.field}=${String(c.to)}`))
+    .join(", ");
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "已复制";
+  } catch {
+    button.textContent = "复制失败，配置见「唯一变更」";
+  }
+  setTimeout(() => {
+    button.textContent = "复制补跑配置";
+  }, 2000);
 }
 
 // ---------- 导航按钮 ----------

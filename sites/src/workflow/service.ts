@@ -33,6 +33,7 @@ import {
 import type {
   AnalysisJobStatus,
   AnalysisRevision,
+  ClaimScope,
   ModelOutputStatus,
   Question,
   QuestionStatus,
@@ -527,6 +528,53 @@ export function createWorkflowService(deps: WorkflowDeps) {
     },
     listRevisions(actor: Actor, questionId: string) {
       return storage.listRevisions(actor, questionId);
+    },
+
+    /** 问题下的作业（节点步骤状态来自其事件）。 */
+    listJobs(actor: Actor, questionId: string) {
+      return storage.listJobs(actor, questionId);
+    },
+
+    /**
+     * 更改问题范围 → 同 questionId 下的新版本（卡 02 契约：范围变化产生新 revision）。
+     * 先校验过期父版本再改主张，晚到的旧响应不会覆盖正在查看的版本。
+     */
+    async changeScope(
+      actor: Actor,
+      input: {
+        questionId: string;
+        scope: ClaimScope;
+        learningRates?: number[];
+        requestId: string;
+        expectedParentId?: string | null;
+      },
+    ): Promise<AnalyzeOutcome> {
+      const question = await storage.getQuestion(actor, input.questionId);
+      if (!question) throw new NotFoundError(`问题不存在: ${input.questionId}`);
+      if (!question.confirmedClaim) {
+        throw new StorageError("needs_claim", "问题尚未明确，先回答澄清并确认范围");
+      }
+      if (
+        input.expectedParentId !== undefined &&
+        input.expectedParentId !== question.currentRevisionId
+      ) {
+        throw new ConflictError(
+          "stale_parent",
+          `基于过期父版本提交（客户端 ${String(input.expectedParentId)}，当前 ${String(question.currentRevisionId)}），请刷新后重试`,
+        );
+      }
+      const claim = {
+        ...question.confirmedClaim,
+        scope: input.scope,
+        learningRates: input.learningRates ?? question.confirmedClaim.learningRates,
+      };
+      await storage.updateClaim(actor, input.questionId, claim, deps.now());
+      return runAnalysis(actor, {
+        requestId: input.requestId,
+        questionId: input.questionId,
+        expectedParentId: input.expectedParentId,
+        freshSnapshot: true,
+      });
     },
   };
 }

@@ -197,6 +197,10 @@ export interface DataService {
   getAnalysis(actor: Actor, revisionId: string): Promise<StoredAnalysis | null>;
   appendJobEvent(actor: Actor, event: JobEvent): Promise<JobEvent>;
   getJobEvents(actor: Actor, jobId: string): Promise<JobEvent[]>;
+  /** 某问题下的全部作业（按创建顺序）。 */
+  listJobs(actor: Actor, questionId: string): Promise<AnalysisJob[]>;
+  /** 更新已确认主张（如范围变化；先于新版本写入）。 */
+  updateClaim(actor: Actor, questionId: string, claim: ClaimSpec, now: string): Promise<Question>;
 }
 
 export const DEMO_PROJECT_ID = "p_demo";
@@ -520,6 +524,26 @@ export function createDataService(backend: StorageBackend): DataService {
     async getJobEvents(actor, jobId) {
       const state = await backend.read(actor);
       return clone(state.jobEvents.filter((e) => e.jobId === jobId));
+    },
+
+    async listJobs(actor, questionId) {
+      const state = await backend.read(actor);
+      if (!state.questions.some((q) => q.questionId === questionId)) {
+        throw new NotFoundError(`问题不存在: ${questionId}`);
+      }
+      return clone(state.jobs.filter((j) => j.questionId === questionId));
+    },
+
+    async updateClaim(actor, questionId, claim, now) {
+      return backend.transact(actor, (draft) => {
+        const question = draft.questions.find((q) => q.questionId === questionId);
+        if (!question) throw new NotFoundError(`问题不存在: ${questionId}`);
+        question.confirmedClaim = clone(claim);
+        question.status = deriveQuestionStatus(draft, question);
+        const project = requireProject(draft, question.projectId);
+        touch(project, now);
+        return clone(question);
+      });
     },
   };
 }

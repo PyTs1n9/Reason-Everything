@@ -547,6 +547,7 @@ select:focus-visible,
   font-size: 13px;
   line-height: 20px;
   color: #a4392f;
+  overflow-wrap: anywhere;
 }
 
 .submit-row {
@@ -591,6 +592,451 @@ select:focus-visible,
   line-height: 20px;
   color: var(--ink-2);
   overflow-wrap: anywhere;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---------- 问题详情（卡 10） ---------- */
+
+.q-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.q-claim {
+  overflow-wrap: anywhere;
+}
+
+.q-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-2);
+}
+
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.q-meta select {
+  width: auto;
+  min-width: 120px;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* 分析节点：横排，窄屏自然换行；状态=图形+文字 */
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.step .glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.step-pending {
+  color: var(--ink-2);
+}
+
+.step-running {
+  color: #8a6d1f;
+}
+
+.step-done .glyph {
+  color: var(--brand);
+}
+
+.step-failed {
+  color: #7a2c25;
+}
+
+/* 两栏主体：≥1200px minmax(0,1fr) 344px gap 24；以下纵向排列 */
+
+.q-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 344px;
+  gap: 24px;
+  align-items: start;
+}
+
+.q-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* 实验对照矩阵（语义表；数值格两行：实测值 / runId） */
+
+.fixed-conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-2);
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.matrix th,
+.matrix td {
+  border: 1px solid var(--line);
+  padding: 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.matrix thead th {
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--bg);
+}
+
+.matrix tbody th {
+  padding: 10px 12px;
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.matrix .c-lr {
+  width: 104px;
+}
+
+.cell-btn {
+  width: 100%;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.cell-btn .val {
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cell-btn .sub {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.cell-btn .muted {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.cell-btn .suggested-text {
+  color: #8a6d1f;
+}
+
+/* 实测=浅绿底+实线；建议补跑=白底+琥珀虚线；未跑=白底+细线 */
+
+.matrix td.state-measured {
+  background: #e8f2ec;
+  border: 1px solid var(--brand);
+}
+
+.matrix td.state-suggested {
+  background: var(--surface);
+  border: 1px dashed #b58a2b;
+}
+
+.matrix td.state-empty {
+  background: var(--surface);
+}
+
+/* 选中=2px 轮廓；证据关联=琥珀 2px 轮廓 */
+
+.matrix td.selected .cell-btn {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.matrix td.linked .cell-btn {
+  outline: 2px solid #b58a2b;
+  outline-offset: -2px;
+}
+
+/* 当前证据（选中格/证据的详情在矩阵下方原位展示） */
+
+.evidence-detail {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.detail-title {
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.raw-row {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.evidence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.evidence-item {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.evidence-item:hover {
+  border-color: var(--ink-2);
+}
+
+.evidence-item[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: #e8f2ec;
+  font-weight: 600;
+}
+
+/* AI 分析（规则解释与模型草稿分区） */
+
+.rule-block {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ai-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ai-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-block h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.ai-block p {
+  overflow-wrap: anywhere;
+}
+
+.citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.citation {
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.citation:hover {
+  border-color: var(--brand);
+}
+
+.model-meta {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* 下一组实验 */
+
+.suggestion-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestion-actions .btn {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* 回填 / 导入抽屉：桌面右侧进入，宽 min(440px,100vw)，手机整宽 */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 51, 45, 0.32);
+  z-index: 50;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  background: var(--surface);
+  z-index: 60;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: -2px 0 12px rgba(24, 51, 45, 0.12);
+  animation: drawer-in 180ms ease-out;
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    animation: none;
+  }
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 /* ---------- 768–1199px：隐藏常驻侧栏 ---------- */
@@ -622,6 +1068,11 @@ select:focus-visible,
 
   .content {
     padding: 24px;
+  }
+
+  /* 问题详情：纵向排列（矩阵→当前证据→AI 分析→补跑/回填→版本记录） */
+  .q-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -727,5 +1178,23 @@ select:focus-visible,
 
   .detail-grid dd {
     margin-bottom: 8px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .matrix .c-lr {
+    width: 74px;
+  }
+
+  .cell-btn {
+    min-height: 64px;
+    padding: 8px 10px;
+  }
+
+  .drawer {
+    width: 100vw;
+    padding: 16px;
   }
 }
