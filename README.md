@@ -1,5 +1,5 @@
 # AgentFlow · 表里有据（2026 Qoder 高校创造力大赛 · StudyHack）
-
+开发人员：GQQXCF ,PyTsING。
 当前唯一开发产品：**`sites/`**——Qoder Sites 交付形态（静态前端 + Edge Function + 托管数据库）。
 
 用户流程：学生建项目 → 输入一条关于实验的归因主张 → 确认想回答的范围 → 导入训练记录 →
