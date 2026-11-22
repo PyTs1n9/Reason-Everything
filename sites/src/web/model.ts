@@ -13,6 +13,68 @@ export function filterProjects(list: readonly ProjectSummary[], query: string): 
   return list.filter((p) => p.name.toLowerCase().includes(q));
 }
 
+// ---------- 项目类型标签（卡 13；Project 存储契约冻结，标签仅存浏览器本机） ----------
+
+/** 新建项目可选类型字典（界面固定选项，不进存储契约）。 */
+export const PROJECT_TYPES = ["计算机科学", "数学", "生物学", "医学", "经济学", "其他"] as const;
+
+/** 规范化类型：去空格后不在字典内（含空串）一律归「其他」。 */
+export function normalizeProjectType(raw: string): string {
+  const value = raw.trim();
+  return (PROJECT_TYPES as readonly string[]).includes(value) ? value : "其他";
+}
+
+/**
+ * 解析本机类型映射（localStorage JSON，属浏览器边界数据）：
+ * 损坏、非对象、数组或非字符串值一律剔除，绝不带病返回。
+ */
+export function parseProjectTypes(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value === "string" && value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
+// ---------- 侧栏树（卡 13：知识库 → 项目文件夹 → 问题文档） ----------
+
+export interface SideTreeQuestion {
+  questionId: string;
+  label: string;
+}
+
+export interface SideTreeNode {
+  projectId: string;
+  name: string;
+  questions: SideTreeQuestion[];
+}
+
+/**
+ * 组装侧栏树节点：项目为文件夹、问题为文档。
+ * 保持输入顺序（项目=更新倒序由调用方保证），空问题项目保留为空文件夹。
+ */
+export function buildSideTree(
+  projects: readonly ProjectSummary[],
+  questionsByProject: Readonly<Record<string, readonly { questionId: string; rawClaim: string }[]>>,
+): SideTreeNode[] {
+  return projects.map((project) => ({
+    projectId: project.projectId,
+    name: project.name,
+    questions: (questionsByProject[project.projectId] ?? []).map((question) => ({
+      questionId: question.questionId,
+      label: question.rawClaim.trim() ? question.rawClaim : "(未填主张)",
+    })),
+  }));
+}
+
 /** 更新时间 → 展示串 "MM-DD HH:mm"（真实时间，本地时区）。 */
 export function formatUpdatedAt(iso: string): string {
   const date = new Date(iso);

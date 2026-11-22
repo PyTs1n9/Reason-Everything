@@ -7,13 +7,17 @@ import { buildEvidencePackage } from "./gen/src/experiment/evidence.js";
 import { validateAccuracy } from "./gen/src/experiment/runs.js";
 import { buildFactRegistry } from "./gen/src/agent/facts.js";
 import {
+  PROJECT_TYPES,
   buildQuestionMatrix,
+  buildSideTree,
   deriveLrOptions,
   evaluateEntryMissing,
   filterProjects,
   formatAccuracy,
   formatUpdatedAt,
   modelGlyph,
+  normalizeProjectType,
+  parseProjectTypes,
   statusGlyph,
 } from "./gen/src/web/model.js";
 
@@ -111,87 +115,160 @@ async function render() {
   await renderSidebar(route);
 }
 
-// ---------- 侧栏 ----------
+// ---------- 侧栏（卡 13：知识库 → 项目文件夹 → 问题文档 的树状导航） ----------
+
+/** 折叠状态存内存：刷新回到全展开（导航状态非业务数据）。 */
+const collapsedProjectIds = new Set();
 
 async function renderSidebar(route) {
-  const group = document.getElementById("sideQuestions");
-  const list = document.getElementById("sideQuestionList");
-  const nameNode = document.getElementById("sideProjectName");
-  clear(list);
+  const nav = document.getElementById("sideNav");
+  clear(nav);
 
-  let projectId = null;
-  if (route.view === "project" || route.view === "newQuestion") projectId = route.projectId;
+  let activeProjectId = null;
+  let activeQuestionId = null;
+  if (route.view === "project" || route.view === "newQuestion") activeProjectId = route.projectId;
   if (route.view === "question") {
+    activeQuestionId = route.questionId;
     const question = await data.getQuestion(ACTOR, route.questionId);
-    projectId = question ? question.projectId : null;
+    if (question) activeProjectId = question.projectId;
   }
+  // 当前项目所在文件夹默认展开，便于定位
+  if (activeProjectId) collapsedProjectIds.delete(activeProjectId);
 
-  if (!projectId) {
-    group.hidden = true;
+  const rootLink = h("a", { class: "side-link side-root", href: "#/", text: "📚 表里有据" });
+  if (route.view === "projects") rootLink.setAttribute("aria-current", "page");
+  nav.append(rootLink);
+
+  const listBox = h("div", { class: "tree", role: "tree", "aria-label": "研究项目树" });
+  nav.append(listBox);
+
+  let tree;
+  try {
+    const projects = await wf.listProjects(ACTOR);
+    const questionsByProject = {};
+    for (const project of projects) {
+      questionsByProject[project.projectId] = await data.listQuestions(ACTOR, project.projectId);
+    }
+    tree = buildSideTree(projects, questionsByProject);
+  } catch (error) {
+    listBox.append(
+      h("p", { class: "aux tree-error", text: `导航加载失败：${error && error.message ? error.message : String(error)}` }),
+    );
     return;
   }
-  try {
-    const project = await data.getProject(ACTOR, projectId);
-    const questions = await data.listQuestions(ACTOR, projectId);
-    nameNode.textContent = project ? project.name : projectId;
-    for (const question of questions) {
-      const link = h(
-        "a",
-        {
-          class: "side-question",
-          href: `#/question/${question.questionId}`,
-          text: question.rawClaim || "(未填主张)",
-        },
-      );
-      if (route.view === "question" && route.questionId === question.questionId) {
-        link.setAttribute("aria-current", "page");
-      }
-      list.append(link);
+
+  if (tree.length === 0) {
+    listBox.append(h("p", { class: "aux tree-empty", text: "还没有研究项目" }));
+    return;
+  }
+
+  for (const node of tree) {
+    const expanded = !collapsedProjectIds.has(node.projectId);
+    const childBox = h("div", { class: "tree-children", role: "group", hidden: !expanded });
+
+    const toggle = h("button", {
+      class: "tree-toggle",
+      type: "button",
+      "aria-expanded": String(expanded),
+      "aria-label": `${expanded ? "折叠" : "展开"}项目 ${node.name}`,
+      text: expanded ? "▾" : "▸",
+    });
+    const projectLink = h("a", {
+      class: "side-link tree-project",
+      href: `#/project/${node.projectId}`,
+    }, "📁 ", node.name);
+    if (activeProjectId === node.projectId) projectLink.setAttribute("aria-current", "page");
+
+    toggle.addEventListener("click", () => {
+      const nowExpanded = childBox.hidden;
+      childBox.hidden = !nowExpanded;
+      toggle.setAttribute("aria-expanded", String(nowExpanded));
+      toggle.textContent = nowExpanded ? "▾" : "▸";
+      toggle.setAttribute("aria-label", `${nowExpanded ? "折叠" : "展开"}项目 ${node.name}`);
+      if (nowExpanded) collapsedProjectIds.delete(node.projectId);
+      else collapsedProjectIds.add(node.projectId);
+    });
+
+    for (const question of node.questions) {
+      const docLink = h("a", {
+        class: "side-question tree-doc",
+        href: `#/question/${question.questionId}`,
+      }, "📄 ", question.label);
+      if (activeQuestionId === question.questionId) docLink.setAttribute("aria-current", "page");
+      childBox.append(docLink);
     }
-    group.hidden = false;
-  } catch {
-    group.hidden = true;
+    if (node.questions.length === 0) {
+      childBox.append(h("span", { class: "aux tree-doc-empty", text: "暂无研究问题" }));
+    }
+
+    listBox.append(
+      h("div", { class: "tree-node", role: "treeitem", "aria-expanded": String(expanded) },
+        h("div", { class: "tree-row" }, toggle, projectLink),
+        childBox,
+      ),
+    );
   }
 }
 
-// ---------- 视图 1：项目列表 ----------
+// ---------- 视图 1：项目列表（卡 13：右上角搜索 + 居中新建弹窗 + 卡片网格） ----------
+
+const PROJECT_TYPES_KEY = "agentflow-project-types";
+
+/** 项目类型是界面元数据：Project 存储契约冻结（三字段），标签只存浏览器本机 localStorage。 */
+function loadProjectTypes() {
+  try {
+    return parseProjectTypes(localStorage.getItem(PROJECT_TYPES_KEY));
+  } catch {
+    // localStorage 不可用（隐私模式等）：标签功能降级为「未分类」，列表本身不受影响
+    return {};
+  }
+}
+
+function saveProjectType(projectId, type) {
+  const map = loadProjectTypes();
+  map[projectId] = type;
+  try {
+    localStorage.setItem(PROJECT_TYPES_KEY, JSON.stringify(map));
+  } catch {
+    // 存不下只影响标签展示，不阻断创建流程
+  }
+}
 
 async function renderProjects() {
-  const searchId = "projectSearch";
-  const head = h(
-    "div",
-    { class: "page-head" },
+  const searchInput = h("input", {
+    type: "search",
+    id: "projectSearch",
+    name: "search",
+    placeholder: "搜索项目（Ctrl K）",
+    autocomplete: "off",
+    "aria-label": "搜索项目，快捷键 Ctrl K",
+  });
+  const searchBox = h("div", { class: "search-box" },
+    searchInput,
+    h("kbd", { class: "search-kbd", "aria-hidden": "true", text: "Ctrl K" }),
+  );
+  const newProjectBtn = h("button", {
+    class: "btn btn-primary btn-new-project",
+    type: "button",
+    id: "newProjectBtn",
+    text: "＋ 新建项目",
+  });
+
+  const head = h("div", { class: "page-head" },
     h("h1", { text: "研究项目" }),
-    h("button", { class: "btn btn-primary", type: "button", id: "newProjectBtn", text: "新建项目" }),
+    h("div", { class: "page-head-actions" }, searchBox, newProjectBtn),
   );
 
-  const createRow = h("div", { class: "toolbar", hidden: true, id: "newProjectForm" },
-    h("div", { class: "field" },
-      h("label", { for: "newProjectName", text: "项目名" }),
-      h("input", { type: "text", id: "newProjectName", name: "projectName", autocomplete: "off" }),
-    ),
-    h("div", { class: "empty-actions" },
-      h("button", { class: "btn btn-primary", type: "button", id: "createProjectConfirm", text: "创建" }),
-      h("button", { class: "btn", type: "button", id: "createProjectCancel", text: "取消" }),
-    ),
-  );
-
-  const searchField = h("div", { class: "field search-field" },
-    h("label", { for: searchId, text: "搜索项目" }),
-    h("input", { type: "search", id: searchId, name: "search", placeholder: "按项目名搜索", autocomplete: "off" }),
-  );
-
-  const tableHost = h("div", { id: "projectTableHost" });
+  const gridHost = h("div", { id: "projectGridHost" });
   const emptyHost = h("div", { id: "projectEmptyHost" });
-
-  main.append(head, createRow, h("div", { class: "toolbar" }, searchField), tableHost, emptyHost);
+  main.append(head, gridHost, emptyHost);
 
   let allProjects = [];
 
-  async function updateTable() {
-    const query = document.getElementById(searchId).value;
+  async function updateGrid() {
+    const query = searchInput.value;
     const list = filterProjects(allProjects, query);
-    clear(tableHost);
+    clear(gridHost);
     clear(emptyHost);
 
     if (allProjects.length === 0) {
@@ -199,12 +276,14 @@ async function renderProjects() {
         h("div", { class: "empty" },
           h("p", { text: "还没有研究项目" }),
           h("div", { class: "empty-actions" },
-            h("button", { class: "btn btn-primary", type: "button", id: "emptyNewProject", text: "新建项目" }),
+            h("button", { class: "btn btn-primary", type: "button", id: "emptyNewProject", text: "＋ 新建项目" }),
             h("button", { class: "btn", type: "button", id: "loadDemo", text: "载入演示项目" }),
           ),
         ),
       );
-      document.getElementById("emptyNewProject").addEventListener("click", openCreateForm);
+      document.getElementById("emptyNewProject").addEventListener("click", (event) => {
+        openCreateProjectModal(event.currentTarget);
+      });
       document.getElementById("loadDemo").addEventListener("click", async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -212,9 +291,9 @@ async function renderProjects() {
         try {
           await data.ensureDemoProject(ACTOR, new Date().toISOString());
           allProjects = await wf.listProjects(ACTOR);
-          await updateTable();
+          await updateGrid();
         } finally {
-          // 按钮随空态/表格重绘被替换；若仍在 DOM 则恢复
+          // 按钮随空态/网格重绘被替换；若仍在 DOM 则恢复
           if (button.isConnected) {
             button.disabled = false;
             button.textContent = "载入演示项目";
@@ -229,84 +308,174 @@ async function renderProjects() {
       return;
     }
 
-    const table = h("table", { class: "data-table", id: "projectTable" },
-      h("colgroup", {},
-        h("col", { class: "col-name" }),
-        h("col", { class: "col-count" }),
-        h("col", { class: "col-pending" }),
-        h("col", { class: "col-updated" }),
-      ),
-      h("thead", {},
-        h("tr", {},
-          h("th", { scope: "col", text: "项目名" }),
-          h("th", { scope: "col", text: "研究问题" }),
-          h("th", { scope: "col", text: "待补实验的问题" }),
-          h("th", { scope: "col", text: "最近更新" }),
-        ),
-      ),
-    );
-    const tbody = h("tbody");
+    const types = loadProjectTypes();
+    const grid = h("div", { class: "project-grid", id: "projectGrid" });
     for (const project of list) {
-      const nameButton = h("button", {
-        class: "name-link",
-        type: "button",
-        text: project.name,
-        "aria-label": `打开项目 ${project.name}`,
-        onclick: () => {
-          location.hash = `#/project/${project.projectId}`;
+      const tag = types[project.projectId] ?? "未分类";
+      grid.append(
+        h("a", {
+          class: "project-card",
+          href: `#/project/${project.projectId}`,
+          dataset: { projectId: project.projectId },
         },
-      });
-      tbody.append(
-        h("tr", { dataset: { projectId: project.projectId } },
-          h("td", { class: "primary-cell" }, nameButton),
-          h("td", { class: "num-cell", "data-label": "研究问题", text: String(project.questionCount) }),
-          h("td", { class: "num-cell", "data-label": "待补实验", text: String(project.pendingCount) }),
-          h("td", { class: "num-cell", "data-label": "最近更新", text: formatUpdatedAt(project.updatedAt) }),
+          h("span", { class: "card-tag", text: tag }),
+          h("span", { class: "card-name", text: project.name }),
+          h("span", { class: "card-meta" },
+            h("span", { class: "card-count", text: `研究问题 ${project.questionCount}` }),
+            h("span", { class: "card-time", text: formatUpdatedAt(project.updatedAt) }),
+          ),
         ),
       );
     }
-    table.append(tbody);
-    tableHost.append(table);
+    gridHost.append(grid);
   }
 
-  function openCreateForm() {
-    createRow.hidden = false;
-    document.getElementById("newProjectName").focus();
-  }
-
-  document.getElementById("newProjectBtn").addEventListener("click", openCreateForm);
-  document.getElementById("createProjectCancel").addEventListener("click", () => {
-    createRow.hidden = true;
-    document.getElementById("newProjectName").value = "";
+  newProjectBtn.addEventListener("click", (event) => {
+    openCreateProjectModal(event.currentTarget);
   });
-  document.getElementById("createProjectConfirm").addEventListener("click", async (event) => {
-    const input = document.getElementById("newProjectName");
-    const name = input.value.trim();
-    if (!name) {
-      input.setAttribute("aria-invalid", "true");
-      input.focus();
-      return;
-    }
-    input.removeAttribute("aria-invalid");
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const project = await wf.createProject(ACTOR, name);
-      input.value = "";
-      createRow.hidden = true;
-      location.hash = `#/project/${project.projectId}`;
-    } catch (error) {
-      button.disabled = false;
-      alert(`创建失败：${error && error.message ? error.message : String(error)}`);
-    }
-  });
-  document.getElementById(searchId).addEventListener("input", () => {
-    updateTable();
+  searchInput.addEventListener("input", () => {
+    updateGrid();
   });
 
   allProjects = await wf.listProjects(ACTOR);
-  await updateTable();
+  await updateGrid();
+
+  // Ctrl K：从其他视图跳回项目列表后聚焦搜索框
+  if (pendingSearchFocus) {
+    pendingSearchFocus = false;
+    searchInput.focus();
+    searchInput.select();
+  }
 }
+
+/** 居中新建项目弹窗：项目名 + 项目类型；Escape/遮罩关闭，焦点限制在弹窗内。 */
+function openCreateProjectModal(trigger) {
+  closeCreateProjectModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "projectModalOverlay" });
+  const modal = h("div", {
+    class: "modal",
+    id: "projectModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "projectModalTitle",
+    tabindex: "-1",
+  });
+
+  const nameInput = h("input", {
+    type: "text",
+    id: "newProjectName",
+    name: "projectName",
+    autocomplete: "off",
+    placeholder: "如：数据增强归因",
+  });
+  const typeSelect = h("select", { id: "newProjectType", name: "projectType" },
+    ...PROJECT_TYPES.map((type) => h("option", { value: type, text: type })),
+  );
+  const error = h("p", { class: "field-error", id: "projectModalError", hidden: true });
+  const confirmBtn = h("button", { class: "btn btn-primary", type: "button", id: "createProjectConfirm", text: "创建" });
+  const cancelBtn = h("button", { class: "btn", type: "button", id: "createProjectCancel", text: "取消" });
+
+  modal.append(
+    h("h2", { id: "projectModalTitle", text: "新建项目" }),
+    h("div", { class: "field" },
+      h("label", { for: "newProjectName", text: "项目名" }),
+      nameInput,
+    ),
+    h("div", { class: "field" },
+      h("label", { for: "newProjectType", text: "项目类型" }),
+      typeSelect,
+    ),
+    error,
+    h("div", { class: "modal-actions" }, confirmBtn, cancelBtn),
+  );
+
+  createProjectModalState = { trigger, overlay, modal };
+
+  confirmBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      nameInput.setAttribute("aria-invalid", "true");
+      error.hidden = false;
+      error.textContent = "请填写项目名";
+      nameInput.focus();
+      return;
+    }
+    nameInput.removeAttribute("aria-invalid");
+    error.hidden = true;
+    confirmBtn.disabled = true;
+    try {
+      const project = await wf.createProject(ACTOR, name);
+      saveProjectType(project.projectId, normalizeProjectType(typeSelect.value));
+      closeCreateProjectModal(false);
+      location.hash = `#/project/${project.projectId}`;
+    } catch (createError) {
+      confirmBtn.disabled = false;
+      error.hidden = false;
+      error.textContent = `创建失败：${createError && createError.message ? createError.message : String(createError)}`;
+    }
+  });
+  cancelBtn.addEventListener("click", () => closeCreateProjectModal());
+  // 弹窗嵌套在遮罩内才受 flex 居中；仅点遮罩本体才关闭
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) closeCreateProjectModal();
+  });
+
+  const trap = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCreateProjectModal();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusables = modal.querySelectorAll("button, input, select, a[href]");
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  modal.addEventListener("keydown", trap);
+
+  // 弹窗必须是遮罩的子节点：遮罩是 fixed flex 容器，兄弟节点不受其居中约束
+  overlay.append(modal);
+  document.body.append(overlay);
+  nameInput.focus();
+}
+
+let createProjectModalState = null;
+
+function closeCreateProjectModal(restoreFocus = true) {
+  const current = createProjectModalState;
+  if (!current) return;
+  current.overlay.remove();
+  current.modal.remove();
+  createProjectModalState = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+/** Ctrl K 全局快捷键：任意视图聚焦项目搜索（不在项目列表则先跳回）。 */
+let pendingSearchFocus = false;
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+  const active = document.activeElement;
+  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+  event.preventDefault();
+  const input = document.getElementById("projectSearch");
+  if (input) {
+    input.focus();
+    input.select();
+    return;
+  }
+  pendingSearchFocus = true;
+  if (location.hash === "#/" || location.hash === "") render();
+  else location.hash = "#/";
+});
 
 // ---------- 视图 2：项目详情 ----------
 
@@ -2107,8 +2276,9 @@ navBtn.addEventListener("click", () => {
   navBtn.setAttribute("aria-expanded", open ? "true" : "false");
 });
 
-document.getElementById("sideProjects").addEventListener("click", () => {
-  closeNav();
+// 侧栏为动态渲染：链接点击（含树内导航）后收起移动端抽屉
+document.getElementById("sideNav").addEventListener("click", (event) => {
+  if (event.target.closest("a")) closeNav();
 });
 
 window.addEventListener("hashchange", () => {

@@ -1198,3 +1198,278 @@ select:focus-visible,
     padding: 16px;
   }
 }
+
+/* ---------- 卡 13：页头动作区（搜索+新建）· 新建弹窗 · 项目卡片网格 · 侧栏树 ---------- */
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  position: relative;
+  width: 360px;
+  max-width: 100%;
+}
+
+.search-box input[type="search"] {
+  min-height: 44px;
+  padding-right: 64px;
+  font-size: 15px;
+}
+
+.search-kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  pointer-events: none;
+}
+
+.btn-new-project {
+  min-height: 44px;
+  padding: 0 20px;
+  font-weight: 600;
+}
+
+/* 新建项目弹窗：居中模态 */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 51, 45, 0.32);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 12px 32px rgba(24, 51, 45, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: modal-in 160ms ease-out;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* 项目卡片网格：瀑布流自适应列，悬停上浮+阴影 */
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: transform 160ms ease-out, box-shadow 160ms ease-out, border-color 160ms ease-out;
+}
+
+.project-card:hover,
+.project-card:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(24, 51, 45, 0.14);
+  border-color: var(--ink-2);
+}
+
+.card-tag {
+  align-self: flex-start;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.card-name {
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--ink-2);
+  flex-wrap: wrap;
+}
+
+/* 侧栏树：知识库根 → 项目文件夹 → 问题文档 */
+
+.side-root {
+  font-weight: 600;
+}
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tree-toggle {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+}
+
+.tree-toggle:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.tree-project {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 22px;
+}
+
+.tree-children[hidden] {
+  display: none;
+}
+
+.tree-doc {
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.tree-doc-empty,
+.tree-empty,
+.tree-error {
+  padding: 4px 8px 4px 30px;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-card {
+    transition: none;
+  }
+
+  .project-card:hover,
+  .project-card:focus-visible {
+    transform: none;
+  }
+
+  .modal {
+    animation: none;
+  }
+}
+
+/* ---------- 卡 13 响应式 ---------- */
+
+@media (max-width: 1199px) {
+  .search-box {
+    width: 320px;
+  }
+}
+
+@media (max-width: 767px) {
+  .page-head-actions {
+    width: 100%;
+  }
+
+  .search-box {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .search-kbd {
+    display: none;
+  }
+
+  .project-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .project-card {
+    padding: 12px;
+  }
+
+  .modal {
+    padding: 16px;
+  }
+
+  .tree-children {
+    padding-left: 18px;
+  }
+}

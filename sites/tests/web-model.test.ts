@@ -4,11 +4,14 @@ import { test } from "node:test";
 import type { ProjectSummary } from "../src/experiment/storage.ts";
 import type { TrainingRun } from "../src/experiment/types.ts";
 import {
+  buildSideTree,
   deriveLrOptions,
   evaluateEntryMissing,
   filterProjects,
   formatUpdatedAt,
   modelGlyph,
+  normalizeProjectType,
+  parseProjectTypes,
   statusGlyph,
 } from "../src/web/model.ts";
 
@@ -172,4 +175,55 @@ test("长运行名与格式化：accuracy 始终一位小数百分数", () => {
   assert.equal(formatAccuracy(82), "82.0%");
   assert.equal(formatAccuracy(81.8), "81.8%");
   assert.equal(formatAccuracy(80), "80.0%");
+});
+
+// ---------- 卡 13：项目类型标签 + 侧栏树 ----------
+
+test("项目类型只认字典内取值，其余归「其他」", () => {
+  assert.equal(normalizeProjectType("计算机科学"), "计算机科学");
+  assert.equal(normalizeProjectType("  数学  "), "数学");
+  assert.equal(normalizeProjectType("天文学"), "其他");
+  assert.equal(normalizeProjectType(""), "其他");
+  assert.equal(normalizeProjectType("   "), "其他");
+});
+
+test("本机类型映射解析：损坏 JSON、数组、非字符串值一律剔除", () => {
+  assert.deepEqual(parseProjectTypes(null), {});
+  assert.deepEqual(parseProjectTypes(""), {});
+  assert.deepEqual(parseProjectTypes("{broken"), {});
+  assert.deepEqual(parseProjectTypes("[1,2]"), {});
+  assert.deepEqual(parseProjectTypes('"text"'), {});
+  assert.deepEqual(parseProjectTypes("null"), {});
+  assert.deepEqual(parseProjectTypes('{"p1":"计算机科学","p2":42,"p3":"","p4":"  数学 "}'), {
+    p1: "计算机科学",
+    p4: "数学",
+  });
+});
+
+test("侧栏树保持项目与问题顺序，空问题项目保留为空文件夹", () => {
+  const projects = [
+    project("p1", "增强开关", "2026-11-22T10:00:00.000Z"),
+    project("p2", "空项目", "2026-11-22T09:00:00.000Z"),
+    project("p3", "学习率", "2026-11-22T08:00:00.000Z"),
+  ];
+  const tree = buildSideTree(projects, {
+    p1: [
+      { questionId: "q1", rawClaim: "数据增强使准确率提高了 2 个百分点" },
+      { questionId: "q2", rawClaim: "   " },
+    ],
+    p3: [{ questionId: "q3", rawClaim: "学习率 0.01 更好" }],
+  });
+  assert.deepEqual(tree.map((n) => n.projectId), ["p1", "p2", "p3"]);
+  assert.equal(tree[0]!.name, "增强开关");
+  assert.deepEqual(tree[0]!.questions.map((q) => q.questionId), ["q1", "q2"]);
+  assert.equal(tree[0]!.questions[0]!.label, "数据增强使准确率提高了 2 个百分点");
+  assert.equal(tree[0]!.questions[1]!.label, "(未填主张)");
+  assert.deepEqual(tree[1]!.questions, []);
+  assert.deepEqual(tree[2]!.questions.map((q) => q.label), ["学习率 0.01 更好"]);
+});
+
+test("侧栏树：无项目返回空数组，缺项目键视为空文件夹", () => {
+  assert.deepEqual(buildSideTree([], { p1: [{ questionId: "q", rawClaim: "x" }] }), []);
+  const tree = buildSideTree([project("p9", "孤岛", "2026-11-22T00:00:00.000Z")], {});
+  assert.deepEqual(tree, [{ projectId: "p9", name: "孤岛", questions: [] }]);
 });
