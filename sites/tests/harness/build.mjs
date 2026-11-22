@@ -18,6 +18,12 @@ const sources = [
   "src/experiment/revision.ts",
   "src/experiment/storage.ts",
   "src/experiment/storage-indexeddb.ts",
+  "src/agent/prompts.ts",
+  "src/agent/adapter.ts",
+  "src/agent/facts.ts",
+  "src/agent/validate.ts",
+  "src/agent/service.ts",
+  "src/workflow/service.ts",
   "tests/fixtures/experiment-demo.ts",
 ];
 

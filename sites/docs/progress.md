@@ -71,3 +71,37 @@
   - C 历史 R03 直接复用（该格零补跑单）；D「两个学习率下都提高了吗」→ 两档四格全覆盖；E agent=null → 规则可用+`unavailable`+job failed+事件摘要「模型服务不可用」；F 缺 seed 行 → `missingConfigs` 恰 `[R03:seed]`、模型零调用；G 同请求重放（模型调用数不变）+ 旧父版本冲突 + 刷新重试 → 版本数 2 正确；权限：BOB 对 alice 的项目/问题/作业全 NotFound；新服务实例恢复版本与事件；模型失败重试沿用 2 行原证据（V1 失败版本保留不被覆盖）。
 - **实测合计**：`cd sites && npm test` = **131/131 pass、fail 0、exit 0**（37+19+20+15+11+19+10）。另修 `agent/validate.ts` 一处边界：增强贡献约束仅在存在缺格时生效（两档齐全的包不再出现无合法文本）。
 - **剩余项**：真实模型/HTTP 映射/浏览器 UI 未做（08/09+，PAT 确认仍缺）；`tsc` 未跑（依赖冻结）。**下一卡**：08。
+
+## 卡 08 · 验证无界面实验核验闭环（2026-11-21）
+
+- **交付**：`package.json` 新增入口——`npm test` → `scripts/run-tests.mjs`（显式发现 `tests/**/*.test.ts` 交给 node --test，打印文件清单；**空测试集一律 exit 1**）、`npm run verify:flow` → `scripts/verify-flow.ts`（正式服务动作驱动的演示验收，隔离项目 p_v1..p_v5、进程内后端，不碰真实研究数据）；`tests/harness/` 升级为工作流级正式适配器验证（build 扩到 agent/workflow 全链，app.js 走 12 动作）。
+- **修复的真实缺陷**：原 `node --test` **空测试集退出码为 0**（实测 /tmp/empty-tests → exit 0），违反「空测试集一律失败」；改为包装入口后 0 文件 → exit 1（实测）。
+- **①–⑥ 实跑**（`cd sites && npm run verify:flow`，exit 0，6 PASS / 0 FAIL）：
+  - ① `矩阵(项目): 0.001/off=R01(80) 0.001/on=— 0.01/off=— 0.01/on=R02(82)`；观测=+2.00（配置差 lr+augmentation）；增强贡献(目标0.01)=**未知**；待补格=1、补跑单=1、引用 runId=[R01,R02]、waiting_for_run。
+  - ② 上下文不变=true、V1可重读=true（两行+缺对照结论）、V2目标效应=+0.20、贡献=+0.20、补跑建议=0、版本数=2。
+  - ③ 两档待补 2→1→0；差值 0.001=**+0.50**、0.01=**+0.20**；终态 reviewable、四格齐。
+  - ④ R03(seed=8) 与 R05(S1:v2) 配对=0、补跑单=1；正确 R03 放 p_v4 → p_v3 配对仍=0、跨项目 R03 不入格。
+  - ⑤ 伪造（R99/81.5/缺格测量）→ `modelOutput=failed、job=failed、规则结论保留、analysis=null、摘要="模型分析失败（validation_failed），保留独立规则报告"`；重试 `reusedSnapshot=true、ready、连回原版证据=true`，失败版本保留。
+  - ⑥ 重进后 项目=5、q_a版本=2、req-1a 作业=succeeded、事件=8；重复提交后版本=2（幂等）；旧父版本冲突拦截=true 且不产生版本；刷新重试后版本=3；模型调用=11。
+  - 汇总：`项目数=5 问题数=4 q_a版本=3 模型调用=11 解析调用=4`，模型模式=mock-verify（离线桩）。
+- **⑥ 正式持久化适配器（非内存桩）**：`node tests/harness/build.mjs` → `serve.mjs` → in-app 浏览器三轮真实页面加载（写入→刷新→追加+重复+冲突→刷新→读回→再手动刷新），报告 `{"adapter":"本机保存","projects":1,"questions":1,"revisions":2,"v1Parent":null,"v1SnapshotRuns":2,"v1StillShowsMissing":true,"job":{"id":"req-h1","revisionId":"rev_367cf8f5…"},"events":7,"ok":true}`，两次复核均 ok=true。
+- **⑦ 真实最终分析（与 npm test 分离）**：**未测**——`get_site` 实测 `backend.status=disabled、capabilities=[]、functions=[]`，`QODER_PAT` 需用户对平台自动创建 PAT 的**明确确认**（卡 06 起持续缺），本账号当前仅静态发布能力。结论句：**「本地规则通过／真实 AI 或云存储待接通」**。平台最小待办：① 用户明确确认 `ensure_backend(qoder)`（自动创建 QODER_PAT）；② 部署 `functions/app`（`Deno.serve` + `/functions/v1/app`，Function 内读 QODER_PAT 调 `api.qoder.com/api/v1/cloud`）；③ 可选云存储 `ensure_backend` database + schemaRef 评审迁移；④ 接通后用固定演示句做单次真实探针，记录脱敏任务号/结果概要并单独验收。不填假数。
+- **验收表**（功能 / 预期 / 实际 / 结论 / 证据）：
+
+| 功能 | 预期 | 实际 | 结论 | 证据 |
+| --- | --- | --- | --- | --- |
+| 离线验收入口 | npm test 发现旧+新用例 | 发现 9 文件 131 例全过 | 通过 | `npm test` → `[run-tests] 通过：131 个用例（9 个文件）`，exit 0 |
+| 空测试集 | 一律失败 | 0 文件 → exit 1（原生 node --test 空集 exit 0 为缺陷，已修） | 通过 | `node scripts/run-tests.mjs /tmp/empty-tests` → exit 1 |
+| ① 初始两行 | 对角线测量、差 2.00、贡献未知、一格待补 | 完全一致 | 通过 | verify:flow `[①] PASS` |
+| ② 追加 R03 | 上下文不变、V1 可读、V2=+0.20、不重复建议 | 完全一致 | 通过 | verify:flow `[②] PASS` |
+| ③ 两档均有效 | 待补 2→1→0；+0.50/+0.20 | 完全一致 | 通过 | verify:flow `[③] PASS` |
+| ④ 配对排除 | 换种子/评测集不配对；跨项目不串 | 配对=0（两种变体+跨项目均 0） | 通过 | verify:flow `[④] PASS` |
+| ⑤ 模型伪造 | 失败+规则保留+重试连回原证据 | failed/保留/reusedSnapshot=true | 通过 | verify:flow `[⑤] PASS` |
+| ⑥ 重进/重复/重试（内存段） | 计数正确 | 5 项目、2→2→3 版本、事件 8 | 通过 | verify:flow `[⑥] PASS` |
+| ⑥ 正式持久化 | IndexedDB 真实刷新，非内存桩 | 三轮真实加载 ok=true | 通过 | harness 报告 JSON（浏览器实测） |
+| ⑦ 真实最终分析 | 平台预览跑一次真实分析 | backend=disabled、functions=[]、PAT 待确认 | **未测** | get_site 实测 + 上方最小待办 |
+| 真实验证与 npm test 分离 | 分开记录 | npm test / 浏览器段 / get_site 分列 | 通过 | 本表与上文 |
+
+- **是否具备进入 UI（09）条件**：**具备**——02–07 正式动作闭环、离线验收入口、A–G 与 ①–⑥ 场景、正式持久化均已实测通过；**保留缺口**：真实模型（PAT 明确确认 + Function 部署）与可选云存储（backend 授权）未接通，UI 中 AI 区需如实显示未完成状态。
+- **实测合计**：`npm test` **131/131 exit 0**；`npm run verify:flow` **exit 0（6 PASS/0 FAIL）**；浏览器段 **ok=true**；`tsc` 未跑（依赖冻结）。
+- **下一卡**：09（UI 起步）。
