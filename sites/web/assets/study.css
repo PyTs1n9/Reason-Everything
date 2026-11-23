@@ -26,7 +26,8 @@ body {
 }
 
 body {
-  background: var(--bg);
+  /* 卡 14：极浅暖灰背景（stone-50 一档），白色面板/卡片得以凸显 */
+  background: #faf9f7;
   color: var(--ink);
   font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
     system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -169,6 +170,10 @@ body {
   flex-direction: column;
   gap: 24px;
   min-width: 0;
+  /* 卡 14：主内容限最大宽度居中，左右留白平衡（约 max-w-6xl） */
+  width: 100%;
+  max-width: 1152px;
+  margin: 0 auto;
 }
 
 /* ---------- 排版 ---------- */
@@ -1201,13 +1206,6 @@ select:focus-visible,
 
 /* ---------- 卡 13：页头动作区（搜索+新建）· 新建弹窗 · 项目卡片网格 · 侧栏树 ---------- */
 
-.page-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
 .search-box {
   position: relative;
   width: 360px;
@@ -1287,12 +1285,24 @@ select:focus-visible,
   flex-wrap: wrap;
 }
 
-/* 项目卡片网格：瀑布流自适应列，悬停上浮+阴影 */
+/* 项目卡片网格：响应式 1/2/3 列（卡 14：grid-cols-1 md:2 lg:3） */
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .project-card {
@@ -1302,16 +1312,16 @@ select:focus-visible,
   padding: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   color: var(--ink);
   text-decoration: none;
-  transition: transform 160ms ease-out, box-shadow 160ms ease-out, border-color 160ms ease-out;
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
 }
 
 .project-card:hover,
 .project-card:focus-visible {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 20px rgba(24, 51, 45, 0.14);
+  transform: translateY(-4px);
+  box-shadow: 0 10px 24px rgba(24, 51, 45, 0.16);
   border-color: var(--ink-2);
 }
 
@@ -1320,16 +1330,15 @@ select:focus-visible,
   font-size: 12px;
   line-height: 18px;
   color: var(--ink-2);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 8px;
+  background: #f1f3f0;
+  border-radius: 6px;
+  padding: 2px 8px;
 }
 
 .card-name {
   font-size: 15px;
   line-height: 24px;
-  font-weight: 600;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -1337,9 +1346,9 @@ select:focus-visible,
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: #7d8984;
   flex-wrap: wrap;
 }
 
@@ -1443,10 +1452,6 @@ select:focus-visible,
 }
 
 @media (max-width: 767px) {
-  .page-head-actions {
-    width: 100%;
-  }
-
   .search-box {
     width: 100%;
     flex: 1 1 100%;
@@ -1457,7 +1462,7 @@ select:focus-visible,
   }
 
   .project-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 
@@ -1471,5 +1476,84 @@ select:focus-visible,
 
   .tree-children {
     padding-left: 18px;
+  }
+}
+
+/* ---------- 卡 14：工作台面板 · 快捷操作 · 区块标题 · 居中容器微调 ---------- */
+
+.section-title {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dash-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(24, 51, 45, 0.08);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dash-panel-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dash-panel .search-box {
+  width: 100%;
+}
+
+.dash-panel .search-box input[type="search"] {
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quick-actions .btn {
+  min-height: 44px;
+  gap: 8px;
+}
+
+.btn-quiet {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.btn-quiet:hover {
+  border-color: var(--ink-2);
+}
+
+.btn-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.quick-status {
+  min-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .dash-panel {
+    padding: 16px;
+  }
+
+  .quick-actions .btn {
+    width: 100%;
+    justify-content: center;
   }
 }

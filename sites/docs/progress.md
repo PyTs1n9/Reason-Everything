@@ -161,3 +161,19 @@
 - **布局实测（layout-probe iframe 真实渲染）**：1440×900=顶栏 64/侧栏 block/搜索 360px/网格 4 列；1024×768=侧栏 none/搜索 320/3 列；390×844=顶栏 56/搜索 358/2 列；320×700=搜索 288/1 列；**四档 scrollWidth==clientWidth 均无横向滚动**；320 下 Modal 宽 288（左右 16）、在视口内、无横向滚动。
 - **实测合计**：`cd sites && npm test` = **148/148 pass、exit 0**（144 旧 + 本卡 4 例：类型字典归一/映射解析边界/树顺序与空文件夹/空输入）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL）；`npm run build:web` = exit 0（改 src 后已重建 gen）。
 - **未测/受限**：真实模型与云存储仍缺（卡 08 起状态不变）；浏览器视口实测在 675px 宽 in-app 窗口完成，1440 桌面宽度以 layout-probe iframe 坐标为准；`tsc` 未跑（依赖冻结）。**下一卡**：14（或用户指定）。
+
+## 卡 14 · 工作台面板与项目网格升级（2026-11-23）
+
+- **交付**：`src/web/model.ts` 纯新增 `quickActionMessage`（快捷操作如实提示：PDF 导入/文献抓取未实现，指向现有 CSV/TSV 入口，未知动作抛错，不伪造执行结果）；`web/assets/study.js` 视图 1 改版——「研究项目」标题下新增白色宽幅工作台面板（大搜索框整合入面板 + 快捷操作按钮区：Lucide 图标内联 SVG 的 [导入 PDF][抓取文献] 浅灰次级按钮 + [＋ 新建项目] 墨绿主按钮 + `role=status` 提示行），新增「最近更新」小标题（空库时隐藏，随列表切换）；`web/assets/study.css` 卡 14 样式段（主内容 max-width 1152px 居中、背景 #FAFAF7 极浅暖灰、面板 rounded-xl 12px + shadow-sm、卡片 rounded-xl 12px + hover 上浮 4px/shadow-md/200ms 过渡、标签浅灰底 6px 圆角、标题 700、底部 meta 12px 灰阶、网格 `grid-cols-1 md:2 lg:3` gap 24px、窄屏快捷按钮全宽）。**图标说明**：依赖冻结不引 lucide-react，采用 Lucide（ISC）图标路径手绘内联 SVG（Upload/Globe/Plus），无第三方依赖。**快捷按钮行为如实**：产品当前无 PDF 解析与外网文献抓取能力，点击显示「尚未实现」+ 指向 CSV/TSV 导入入口，不冒充已执行。
+- **功能验收（in-app 浏览器，源 127.0.0.1:8324，layout-probe iframe 真实渲染）**：面板圆角 12px、shadow-sm、背景 rgb(250,249,247)；[导入 PDF]→「PDF 导入尚未实现：当前实验记录支持 CSV/TSV…」、[抓取文献]→「抓取文献尚未实现：本版本不联网…」（提示行 role=status）；主按钮 #175842 白字、次级 #F4F6F3 浅灰；建「项目甲/计算机科学」「项目乙/数学」「项目丙/医学」三卡片：标签浅灰底 6px 圆角、名称 700、meta 12px rgb(125,137,132)、圆角 12px、transition 200ms；CSS 规则核对 hover `translateY(-4px)` + 阴影 0 10px 24px；搜索过滤「项目乙」→ 1 卡；Ctrl K → activeElement=projectSearch；空库「最近更新」隐藏 + 空态「还没有研究项目」正常；320px 弹窗 288px 居中、焦点在项目名、无横向滚动。
+- **布局实测（CSS 像素，layout-probe iframe）**：
+
+| 宽度 | 主内容 x/宽 | 面板宽 | 网格列 | 横向滚动 |
+| --- | --- | --- | --- | --- |
+| 1440×900 | 252 / 1152（max-width 居中）✓ | 1088 ✓ | 3（346.7px×3）✓ | 无 ✓ |
+| 1024×768 | 0 / 1024 ✓ | 976 ✓ | 3（309.3px）✓ | 无 ✓ |
+| 390×844 | 0 / 390 ✓ | 358 ✓ | 1（342.7px）✓ | 无 ✓ |
+| 320×700 | 0 / 320 ✓ | 288 ✓ | 1（272.7px）✓ | 无 ✓ |
+
+- **实测合计**：`cd sites && npm test` = **149/149 pass、exit 0**（148 卡 13 + 本卡 1 例：快捷提示文案与未知动作抛错）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL）；`npm run build:web` = exit 0。
+- **未测/受限**：浏览器可见截图面仍不可用（NATIVE_BROWSER_VIEWPORT_UNAVAILABLE，与卡 10 同），以 DOM/计算样式/坐标数据留证；悬停伪类以 CSS 规则 + computed transition 核对（无可见指针面）；真实模型与云存储状态不变；`tsc` 未跑（依赖冻结）。**下一卡**：15（或用户指定）。

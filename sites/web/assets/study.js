@@ -18,6 +18,7 @@ import {
   modelGlyph,
   normalizeProjectType,
   parseProjectTypes,
+  quickActionMessage,
   statusGlyph,
 } from "./gen/src/web/model.js";
 
@@ -210,7 +211,12 @@ async function renderSidebar(route) {
   }
 }
 
-// ---------- 视图 1：项目列表（卡 13：右上角搜索 + 居中新建弹窗 + 卡片网格） ----------
+// ---------- 视图 1：项目列表（卡 13/14：工作台面板 + 右上角搜索 + 居中新建弹窗 + 卡片网格） ----------
+
+// Lucide 图标内联 SVG（ISC 许可图形，dependency 冻结不引 lucide-react，取其图标路径手绘内联）
+const ICON_UPLOAD = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>';
+const ICON_GLOBE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
 
 const PROJECT_TYPES_KEY = "agentflow-project-types";
 
@@ -251,17 +257,29 @@ async function renderProjects() {
     class: "btn btn-primary btn-new-project",
     type: "button",
     id: "newProjectBtn",
-    text: "＋ 新建项目",
   });
+  newProjectBtn.insertAdjacentHTML("afterbegin", ICON_PLUS);
+  newProjectBtn.append("新建项目");
 
-  const head = h("div", { class: "page-head" },
-    h("h1", { text: "研究项目" }),
-    h("div", { class: "page-head-actions" }, searchBox, newProjectBtn),
+  const importPdfBtn = h("button", { class: "btn btn-quiet", type: "button", id: "importPdfBtn" });
+  importPdfBtn.insertAdjacentHTML("afterbegin", ICON_UPLOAD);
+  importPdfBtn.append("导入 PDF");
+  const fetchPaperBtn = h("button", { class: "btn btn-quiet", type: "button", id: "fetchPaperBtn" });
+  fetchPaperBtn.insertAdjacentHTML("afterbegin", ICON_GLOBE);
+  fetchPaperBtn.append("抓取文献");
+  const quickStatus = h("p", { class: "aux quick-status", id: "quickStatus", role: "status" });
+
+  const head = h("div", { class: "page-head" }, h("h1", { text: "研究项目" }));
+  const panel = h("div", { class: "dash-panel" },
+    h("div", { class: "dash-panel-row" }, searchBox),
+    h("div", { class: "quick-actions" }, importPdfBtn, fetchPaperBtn, newProjectBtn),
+    quickStatus,
   );
 
   const gridHost = h("div", { id: "projectGridHost" });
   const emptyHost = h("div", { id: "projectEmptyHost" });
-  main.append(head, gridHost, emptyHost);
+  const sectionTitle = h("h2", { class: "section-title", id: "recentTitle", text: "最近更新", hidden: true });
+  main.append(head, panel, sectionTitle, gridHost, emptyHost);
 
   let allProjects = [];
 
@@ -270,6 +288,7 @@ async function renderProjects() {
     const list = filterProjects(allProjects, query);
     clear(gridHost);
     clear(emptyHost);
+    sectionTitle.hidden = allProjects.length === 0;
 
     if (allProjects.length === 0) {
       emptyHost.append(
@@ -332,6 +351,12 @@ async function renderProjects() {
 
   newProjectBtn.addEventListener("click", (event) => {
     openCreateProjectModal(event.currentTarget);
+  });
+  importPdfBtn.addEventListener("click", () => {
+    quickStatus.textContent = quickActionMessage("import_pdf");
+  });
+  fetchPaperBtn.addEventListener("click", () => {
+    quickStatus.textContent = quickActionMessage("fetch_paper");
   });
   searchInput.addEventListener("input", () => {
     updateGrid();

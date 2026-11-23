@@ -44,6 +44,24 @@ export function parseProjectTypes(raw: string | null): Record<string, string> {
   return out;
 }
 
+// ---------- 快捷操作提示（卡 14） ----------
+
+/**
+ * 快捷操作按钮的如实响应文案。
+ * 产品当前没有 PDF 导入与文献抓取能力（无第三方依赖、无外网采集），
+ * 点击后如实说明并指向现有入口，绝不伪造执行结果。
+ */
+export function quickActionMessage(action: "import_pdf" | "fetch_paper"): string {
+  switch (action) {
+    case "import_pdf":
+      return "PDF 导入尚未实现：当前实验记录支持 CSV/TSV 粘贴或上传，请在项目内「新建研究问题」导入。";
+    case "fetch_paper":
+      return "抓取文献尚未实现：本版本不联网抓取外部文献，请手动提供实验记录。";
+    default:
+      throw new Error(`未知快捷操作: ${String(action)}`);
+  }
+}
+
 // ---------- 侧栏树（卡 13：知识库 → 项目文件夹 → 问题文档） ----------
 
 export interface SideTreeQuestion {

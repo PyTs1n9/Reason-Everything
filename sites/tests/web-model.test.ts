@@ -227,3 +227,16 @@ test("侧栏树：无项目返回空数组，缺项目键视为空文件夹", ()
   const tree = buildSideTree([project("p9", "孤岛", "2026-11-22T00:00:00.000Z")], {});
   assert.deepEqual(tree, [{ projectId: "p9", name: "孤岛", questions: [] }]);
 });
+
+// ---------- 卡 14：快捷操作提示 ----------
+
+test("快捷操作提示如实说明未实现并指向现有入口，未知动作抛错", async () => {
+  const { quickActionMessage } = await import("../src/web/model.ts");
+  const pdf = quickActionMessage("import_pdf");
+  assert.match(pdf, /尚未实现/);
+  assert.match(pdf, /CSV\/TSV/);
+  const paper = quickActionMessage("fetch_paper");
+  assert.match(paper, /尚未实现/);
+  assert.match(paper, /不联网/);
+  assert.throws(() => quickActionMessage(/** @type {any} */ ("unknown")), /未知快捷操作/);
+});
