@@ -10,17 +10,22 @@ import {
   PROJECT_TYPES,
   buildQuestionMatrix,
   buildSideTree,
+  computeDashboardStats,
   deriveLrOptions,
   evaluateEntryMissing,
+  extractPaperTitle,
   filterProjects,
   formatAccuracy,
   formatUpdatedAt,
+  highlightMatches,
   modelGlyph,
   normalizeProjectType,
   parseProjectTypes,
-  quickActionMessage,
+  sortProjects,
   statusGlyph,
+  typeColorClass,
 } from "./gen/src/web/model.js";
+import { createLiteratureClient } from "./gen/src/web/literature.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -78,6 +83,122 @@ function clear(node) {
 
 function shortId(id) {
   return id.length > 14 ? `${id.slice(0, 14)}…` : id;
+}
+
+// ---------- 轻提示 / 计数动画 / 本机 UI 元数据（卡 15） ----------
+
+let toastTimer = null;
+
+/** 右下角轻提示（role=status）；新提示替换旧提示。 */
+function toast(message, kind = "") {
+  if (toastTimer) clearTimeout(toastTimer);
+  for (const node of [...document.querySelectorAll(".toast")]) node.remove();
+  const node = h("div", { class: kind ? `toast toast-${kind}` : "toast", role: "status", text: message });
+  document.body.append(node);
+  toastTimer = setTimeout(() => node.remove(), 3200);
+}
+
+/** 数字 count-up；降低动效偏好或 ≤0 直接显示终值。 */
+function countUp(node, target) {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce || target <= 0) {
+    node.textContent = String(target);
+    return;
+  }
+  const start = performance.now();
+  const duration = 600;
+  const tick = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    node.textContent = String(Math.round(target * (1 - (1 - t) ** 3)));
+    if (t < 1) requestAnimationFrame(tick);
+    else node.textContent = String(target);
+  };
+  requestAnimationFrame(tick);
+}
+
+const PINNED_KEY = "agentflow-pinned-projects";
+const PAPER_IMPORTS_KEY = "agentflow-paper-imports";
+
+/** 置顶项目 ID 集合（UI 元数据，仅存本机 localStorage）。 */
+function loadPinnedIds() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PINNED_KEY) ?? "[]");
+    const list = Array.isArray(parsed) ? parsed : [];
+    return new Set(list.filter((item) => typeof item === "string" && item));
+  } catch {
+    // localStorage 不可用/坏数据：置顶降级为无
+    return new Set();
+  }
+}
+
+function savePinnedIds(ids) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...ids]));
+  } catch {
+    // 存不下只影响置顶保持
+  }
+}
+
+/** 导入来源元数据（PDF/文献；projectId → 记录，界面溯源用，不入业务存储契约）。 */
+function savePaperImport(projectId, record) {
+  try {
+    const raw = localStorage.getItem(PAPER_IMPORTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const map = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+    map[projectId] = record;
+    localStorage.setItem(PAPER_IMPORTS_KEY, JSON.stringify(map));
+  } catch {
+    // 存不下只影响溯源展示
+  }
+}
+
+async function sha256hex(buffer) {
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+let pdfLibPromise = null;
+
+/** 懒加载 vendored pdf.js（依赖冻结沿用既有 vendor，零新增依赖）。 */
+function loadPdfLib() {
+  if (!pdfLibPromise) {
+    pdfLibPromise = import("./vendor/pdf.min.mjs").then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", import.meta.url).href;
+      return lib;
+    });
+    pdfLibPromise.catch(() => {
+      pdfLibPromise = null;
+    });
+  }
+  return pdfLibPromise;
+}
+
+/** 弹窗通用行为：嵌套遮罩居中、Escape/遮罩关闭、Tab 焦点限制（卡 13 修复版式）。 */
+function attachModalBehavior(overlay, modal, close) {
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusables = modal.querySelectorAll("button, input, select, textarea, a[href]");
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  overlay.append(modal);
+  document.body.append(overlay);
 }
 
 // ---------- 路由 ----------
@@ -217,6 +338,24 @@ async function renderSidebar(route) {
 const ICON_UPLOAD = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>';
 const ICON_GLOBE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
+const ICON_PIN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+const ICON_EDIT = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
+
+/** 无搜索结果插画（内联 SVG，不引图形依赖）。 */
+const ILLUSTRATION_EMPTY = '<svg viewBox="0 0 96 64" width="96" height="64" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="8" width="38" height="50" rx="4"/><line x1="24" y1="20" x2="46" y2="20"/><line x1="24" y1="28" x2="46" y2="28"/><line x1="24" y1="36" x2="38" y2="36"/><circle cx="66" cy="38" r="12"/><line x1="75" y1="47" x2="86" y2="58"/></svg>';
+
+/** 载入等待骨架（3 张占位卡）。 */
+function skeletonGrid() {
+  const grid = h("div", { class: "project-grid", "aria-hidden": "true" });
+  for (let i = 0; i < 3; i++) {
+    grid.append(h("div", { class: "skeleton-card" },
+      h("div", { class: "skeleton-bar skeleton-tag" }),
+      h("div", { class: "skeleton-bar skeleton-name" }),
+      h("div", { class: "skeleton-bar skeleton-meta" }),
+    ));
+  }
+  return grid;
+}
 
 const PROJECT_TYPES_KEY = "agentflow-project-types";
 
@@ -267,27 +406,129 @@ async function renderProjects() {
   const fetchPaperBtn = h("button", { class: "btn btn-quiet", type: "button", id: "fetchPaperBtn" });
   fetchPaperBtn.insertAdjacentHTML("afterbegin", ICON_GLOBE);
   fetchPaperBtn.append("抓取文献");
-  const quickStatus = h("p", { class: "aux quick-status", id: "quickStatus", role: "status" });
+  const pdfInput = h("input", {
+    type: "file",
+    id: "pdfFileInput",
+    accept: "application/pdf,.pdf",
+    hidden: true,
+    "aria-hidden": "true",
+    tabindex: "-1",
+  });
 
-  const head = h("div", { class: "page-head" }, h("h1", { text: "研究项目" }));
+  const kpiRow = h("div", { class: "kpi-row", id: "kpiRow", "aria-label": "工作台统计" });
+  const hero = h("div", { class: "hero" },
+    h("h1", { text: "研究项目" }),
+    h("p", { class: "hero-sub", text: "记录实验归因主张，用对照证据回答「是不是真的」。" }),
+    kpiRow,
+    searchBox,
+  );
   const panel = h("div", { class: "dash-panel" },
-    h("div", { class: "dash-panel-row" }, searchBox),
-    h("div", { class: "quick-actions" }, importPdfBtn, fetchPaperBtn, newProjectBtn),
-    quickStatus,
+    h("div", { class: "quick-actions" }, importPdfBtn, fetchPaperBtn, newProjectBtn, pdfInput),
   );
 
   const gridHost = h("div", { id: "projectGridHost" });
   const emptyHost = h("div", { id: "projectEmptyHost" });
   const sectionTitle = h("h2", { class: "section-title", id: "recentTitle", text: "最近更新", hidden: true });
-  main.append(head, panel, sectionTitle, gridHost, emptyHost);
+  main.append(hero, panel, sectionTitle, gridHost, emptyHost);
 
   let allProjects = [];
+  let pinnedIds = loadPinnedIds();
+  let flashProjectId = null;
+  let enterGrid = true;
+
+  let lastKpi = null;
+
+  function renderKpis() {
+    const stats = computeDashboardStats(allProjects, new Date().toISOString());
+    const next = `${stats.projectCount}|${stats.questionCount}|${stats.weekUpdated}`;
+    if (next === lastKpi) return;
+    lastKpi = next;
+    clear(kpiRow);
+    for (const item of [
+      { label: "项目", value: stats.projectCount },
+      { label: "研究问题", value: stats.questionCount },
+      { label: "近 7 天更新", value: stats.weekUpdated },
+    ]) {
+      const num = h("span", { class: "kpi-num", text: "0" });
+      kpiRow.append(h("div", { class: "kpi" }, num, h("span", { class: "kpi-label", text: item.label })));
+      countUp(num, item.value);
+    }
+  }
+
+  function cardFor(project, index, animate) {
+    const types = loadProjectTypes();
+    const tag = types[project.projectId] ?? "未分类";
+    const pinned = pinnedIds.has(project.projectId);
+    const total = project.questionCount;
+    const pending = project.pendingCount;
+    const pct = total > 0 ? Math.round(((total - pending) / total) * 100) : 0;
+
+    const pinBtn = h("button", {
+      class: "card-action",
+      type: "button",
+      "aria-pressed": String(pinned),
+      "aria-label": `${pinned ? "取消置顶" : "置顶"}项目 ${project.name}`,
+      title: pinned ? "取消置顶" : "置顶",
+    });
+    pinBtn.insertAdjacentHTML("afterbegin", ICON_PIN);
+    pinBtn.addEventListener("click", () => {
+      if (pinned) pinnedIds.delete(project.projectId);
+      else pinnedIds.add(project.projectId);
+      savePinnedIds(pinnedIds);
+      toast(pinned ? `已取消置顶「${project.name}」` : `已置顶「${project.name}」`);
+      updateGrid();
+    });
+
+    const renameBtn = h("button", {
+      class: "card-action",
+      type: "button",
+      "aria-label": `重命名项目 ${project.name}`,
+      title: "重命名",
+    });
+    renameBtn.insertAdjacentHTML("afterbegin", ICON_EDIT);
+    renameBtn.addEventListener("click", async () => {
+      openRenameProjectModal(project, renameBtn, async () => {
+        allProjects = await wf.listProjects(ACTOR);
+        await updateGrid();
+        await renderSidebar(parseRoute());
+      });
+    });
+
+    const nameNode = h("a", { class: "card-name", href: `#/project/${project.projectId}` },
+      ...highlightMatches(project.name, searchInput.value).map((seg) =>
+        seg.hit ? h("mark", { class: "card-hit", text: seg.text }) : seg.text),
+    );
+
+    return h("div", {
+      class: animate ? "project-card project-card--enter" : "project-card",
+      dataset: { projectId: project.projectId },
+      style: `--card-i:${index}`,
+    },
+      h("div", { class: "card-top" },
+        h("span", { class: `card-tag ${typeColorClass(tag)}`, text: tag }),
+        h("div", { class: "card-actions" }, pinBtn, renameBtn),
+      ),
+      nameNode,
+      h("span", { class: "card-meta" },
+        h("span", { class: "card-count", text: `研究问题 ${total}` }),
+        h("span", { class: "card-pending", text: pending > 0 ? `待补跑 ${pending}` : "无待补跑" }),
+        h("span", { class: "card-time", text: formatUpdatedAt(project.updatedAt) }),
+      ),
+      h("div", {
+        class: "card-progress",
+        role: "img",
+        "aria-label": `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
+        title: `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
+      }, h("div", { class: "card-progress-bar", style: `width:${pct}%` })),
+    );
+  }
 
   async function updateGrid() {
     const query = searchInput.value;
-    const list = filterProjects(allProjects, query);
+    const list = sortProjects(filterProjects(allProjects, query), pinnedIds);
     clear(gridHost);
     clear(emptyHost);
+    renderKpis();
     sectionTitle.hidden = allProjects.length === 0;
 
     if (allProjects.length === 0) {
@@ -307,10 +548,18 @@ async function renderProjects() {
         const button = event.currentTarget;
         button.disabled = true;
         button.textContent = "载入中…";
+        gridHost.append(skeletonGrid());
         try {
-          await data.ensureDemoProject(ACTOR, new Date().toISOString());
+          const demo = await data.ensureDemoProject(ACTOR, new Date().toISOString());
           allProjects = await wf.listProjects(ACTOR);
+          flashProjectId = demo.project.projectId;
+          enterGrid = true;
+          toast("演示项目已载入", "ok");
           await updateGrid();
+          await renderSidebar(parseRoute());
+        } catch (demoError) {
+          clear(gridHost);
+          toast(`载入失败：${demoError && demoError.message ? demoError.message : String(demoError)}`, "bad");
         } finally {
           // 按钮随空态/网格重绘被替换；若仍在 DOM 则恢复
           if (button.isConnected) {
@@ -323,43 +572,55 @@ async function renderProjects() {
     }
 
     if (list.length === 0) {
-      emptyHost.append(h("div", { class: "empty" }, h("p", { text: "没有匹配的项目" })));
+      const illust = h("div", { class: "empty-illust", "aria-hidden": "true" });
+      illust.insertAdjacentHTML("afterbegin", ILLUSTRATION_EMPTY);
+      emptyHost.append(
+        h("div", { class: "empty" },
+          illust,
+          h("p", { text: "没有匹配的项目" }),
+        ),
+      );
       return;
     }
 
-    const types = loadProjectTypes();
     const grid = h("div", { class: "project-grid", id: "projectGrid" });
-    for (const project of list) {
-      const tag = types[project.projectId] ?? "未分类";
-      grid.append(
-        h("a", {
-          class: "project-card",
-          href: `#/project/${project.projectId}`,
-          dataset: { projectId: project.projectId },
-        },
-          h("span", { class: "card-tag", text: tag }),
-          h("span", { class: "card-name", text: project.name }),
-          h("span", { class: "card-meta" },
-            h("span", { class: "card-count", text: `研究问题 ${project.questionCount}` }),
-            h("span", { class: "card-time", text: formatUpdatedAt(project.updatedAt) }),
-          ),
-        ),
-      );
-    }
+    const animate = enterGrid;
+    enterGrid = false;
+    list.forEach((project, index) => grid.append(cardFor(project, index, animate)));
     gridHost.append(grid);
+    if (flashProjectId) {
+      const node = grid.querySelector(`[data-project-id="${flashProjectId}"]`);
+      flashProjectId = null;
+      if (node) {
+        node.classList.add("card-flash");
+        setTimeout(() => node.classList.remove("card-flash"), 1400);
+      }
+    }
   }
 
   newProjectBtn.addEventListener("click", (event) => {
     openCreateProjectModal(event.currentTarget);
   });
   importPdfBtn.addEventListener("click", () => {
-    quickStatus.textContent = quickActionMessage("import_pdf");
+    pdfInput.click();
   });
-  fetchPaperBtn.addEventListener("click", () => {
-    quickStatus.textContent = quickActionMessage("fetch_paper");
+  pdfInput.addEventListener("change", () => {
+    const file = pdfInput.files && pdfInput.files[0];
+    pdfInput.value = "";
+    if (file) importPdfFile(file, importPdfBtn);
+  });
+  fetchPaperBtn.addEventListener("click", (event) => {
+    openFetchPaperModal(event.currentTarget);
   });
   searchInput.addEventListener("input", () => {
     updateGrid();
+  });
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && searchInput.value) {
+      event.preventDefault();
+      searchInput.value = "";
+      updateGrid();
+    }
   });
 
   allProjects = await wf.listProjects(ACTOR);
@@ -373,8 +634,9 @@ async function renderProjects() {
   }
 }
 
-/** 居中新建项目弹窗：项目名 + 项目类型；Escape/遮罩关闭，焦点限制在弹窗内。 */
-function openCreateProjectModal(trigger) {
+/** 居中新建项目弹窗：项目名 + 项目类型；Escape/遮罩关闭，焦点限制在弹窗内。
+ * options.prefillName 预填名称；options.paperMeta 创建成功后记入本机导入溯源（不入存储契约）。 */
+function openCreateProjectModal(trigger, options = {}) {
   closeCreateProjectModal(false);
   const overlay = h("div", { class: "modal-overlay", id: "projectModalOverlay" });
   const modal = h("div", {
@@ -392,6 +654,7 @@ function openCreateProjectModal(trigger) {
     name: "projectName",
     autocomplete: "off",
     placeholder: "如：数据增强归因",
+    value: options.prefillName ?? "",
   });
   const typeSelect = h("select", { id: "newProjectType", name: "projectType" },
     ...PROJECT_TYPES.map((type) => h("option", { value: type, text: type })),
@@ -431,6 +694,7 @@ function openCreateProjectModal(trigger) {
     try {
       const project = await wf.createProject(ACTOR, name);
       saveProjectType(project.projectId, normalizeProjectType(typeSelect.value));
+      if (options.paperMeta) savePaperImport(project.projectId, options.paperMeta);
       closeCreateProjectModal(false);
       location.hash = `#/project/${project.projectId}`;
     } catch (createError) {
@@ -480,6 +744,356 @@ function closeCreateProjectModal(restoreFocus = true) {
   current.overlay.remove();
   current.modal.remove();
   createProjectModalState = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+// ---------- 导入 PDF（vendored pdf.js 本地解析；首页文本仅展示不持久化） ----------
+
+async function importPdfFile(file, trigger) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    toast("只支持 PDF 文件", "bad");
+    return;
+  }
+  toast(`正在本地解析：${file.name}`);
+  try {
+    const buffer = await file.arrayBuffer();
+    const sha256 = await sha256hex(buffer.slice(0));
+    const pdfjsLib = await loadPdfLib();
+    const pdf = await pdfjsLib.getDocument({
+      data: buffer,
+      cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
+      cMapPacked: true,
+      standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
+    }).promise;
+
+    let metaTitle = "";
+    try {
+      const meta = await pdf.getMetadata();
+      metaTitle = String((meta && meta.info && meta.info.Title) || "").trim();
+    } catch {
+      // 元数据缺失不阻断摄取
+    }
+
+    const pages = [];
+    for (let number = 1; number <= pdf.numPages; number++) {
+      const page = await pdf.getPage(number);
+      const content = await page.getTextContent();
+      pages.push(
+        content.items
+          .map((item) => (item.str ?? "") + (item.hasEOL ? "\n" : " "))
+          .join("")
+          .replace(/[ \t]{2,}/g, " ")
+          .trim(),
+      );
+    }
+    const textChars = pages.reduce((sum, text) => sum + Array.from(text).length, 0);
+    if (!textChars) {
+      toast("没有文字层：扫描件需要先 OCR", "bad");
+      return;
+    }
+    const title = extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
+    openImportResultModal({ file, pages, textChars, title, sha256, trigger });
+  } catch (error) {
+    toast(`解析失败：${error && error.message ? error.message : String(error)}`, "bad");
+  }
+}
+
+let importModalState = null;
+
+function openImportResultModal({ file, pages, textChars, title, sha256, trigger }) {
+  closeImportResultModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "importModalOverlay" });
+  const modal = h("div", {
+    class: "modal modal--wide",
+    id: "importModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "importModalTitle",
+    tabindex: "-1",
+  });
+
+  const titleInput = h("input", { type: "text", id: "importPaperTitle", value: title, autocomplete: "off" });
+  const preview = h("p", {
+    class: "import-preview",
+    text: (pages[0] ?? "").slice(0, 600) || "（首页无文本）",
+  });
+
+  const copyBtn = h("button", { class: "btn", type: "button", id: "importCopyText", text: "复制首页文本" });
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(pages[0] ?? "");
+      copyBtn.textContent = "已复制";
+    } catch {
+      copyBtn.textContent = "复制失败，请手动选取";
+    }
+    setTimeout(() => {
+      copyBtn.textContent = "复制首页文本";
+    }, 2000);
+  });
+
+  const useBtn = h("button", { class: "btn btn-primary", type: "button", id: "importUseTitle", text: "以题名新建项目" });
+  useBtn.addEventListener("click", () => {
+    const nextName = titleInput.value.trim() || file.name.replace(/\.pdf$/i, "");
+    closeImportResultModal(false);
+    openCreateProjectModal(trigger, {
+      prefillName: nextName,
+      paperMeta: {
+        source: "pdf",
+        filename: file.name,
+        pages: pages.length,
+        textChars,
+        sha256,
+        title: nextName,
+      },
+    });
+  });
+  const closeBtn = h("button", { class: "btn", type: "button", id: "importClose", text: "关闭" });
+  closeBtn.addEventListener("click", () => closeImportResultModal());
+
+  modal.append(
+    h("h2", { id: "importModalTitle", text: "PDF 已本地解析" }),
+    h("dl", { class: "import-facts" },
+      h("dt", { text: "文件" }),
+      h("dd", { text: file.name }),
+      h("dt", { text: "页数" }),
+      h("dd", { text: String(pages.length) }),
+      h("dt", { text: "字符数" }),
+      h("dd", { text: String(textChars) }),
+      h("dt", { text: "SHA-256" }),
+      h("dd", { class: "mono", text: shortId(sha256) }),
+    ),
+    h("div", { class: "field" },
+      h("label", { for: "importPaperTitle", text: "议题名（可修改）" }),
+      titleInput,
+    ),
+    h("div", { class: "field" },
+      h("span", { class: "aux", text: "首页文本预览（仅展示便于写主张，不持久化保存）" }),
+      preview,
+    ),
+    h("div", { class: "modal-actions" }, copyBtn, useBtn, closeBtn),
+  );
+
+  importModalState = { trigger, overlay };
+  attachModalBehavior(overlay, modal, closeImportResultModal);
+  titleInput.focus();
+  titleInput.select();
+}
+
+function closeImportResultModal(restoreFocus = true) {
+  const current = importModalState;
+  if (!current) return;
+  current.overlay.remove();
+  importModalState = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+// ---------- 卡片操作：重命名 ----------
+
+let renameModalState = null;
+
+function openRenameProjectModal(project, trigger, onRenamed) {
+  closeRenameProjectModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "renameModalOverlay" });
+  const modal = h("div", {
+    class: "modal",
+    id: "renameModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "renameModalTitle",
+    tabindex: "-1",
+  });
+
+  const nameInput = h("input", {
+    type: "text",
+    id: "renameProjectInput",
+    value: project.name,
+    autocomplete: "off",
+  });
+  const error = h("p", { class: "field-error", id: "renameModalError", hidden: true });
+  const confirmBtn = h("button", { class: "btn btn-primary", type: "button", text: "保存" });
+  const cancelBtn = h("button", { class: "btn", type: "button", text: "取消" });
+
+  modal.append(
+    h("h2", { id: "renameModalTitle", text: "重命名项目" }),
+    h("div", { class: "field" },
+      h("label", { for: "renameProjectInput", text: "项目名" }),
+      nameInput,
+    ),
+    error,
+    h("div", { class: "modal-actions" }, confirmBtn, cancelBtn),
+  );
+
+  confirmBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      nameInput.setAttribute("aria-invalid", "true");
+      error.hidden = false;
+      error.textContent = "请填写项目名";
+      nameInput.focus();
+      return;
+    }
+    nameInput.removeAttribute("aria-invalid");
+    error.hidden = true;
+    confirmBtn.disabled = true;
+    try {
+      await data.renameProject(ACTOR, project.projectId, name, new Date().toISOString());
+      closeRenameProjectModal(false);
+      toast(`已重命名为「${name}」`, "ok");
+      if (onRenamed) await onRenamed();
+    } catch (renameError) {
+      confirmBtn.disabled = false;
+      error.hidden = false;
+      error.textContent = `重命名失败：${renameError && renameError.message ? renameError.message : String(renameError)}`;
+    }
+  });
+  cancelBtn.addEventListener("click", () => closeRenameProjectModal());
+
+  renameModalState = { trigger, overlay };
+  attachModalBehavior(overlay, modal, closeRenameProjectModal);
+  nameInput.focus();
+  nameInput.select();
+}
+
+function closeRenameProjectModal(restoreFocus = true) {
+  const current = renameModalState;
+  if (!current) return;
+  current.overlay.remove();
+  renameModalState = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+// ---------- 抓取文献（Crossref 公共 API，仅取元数据不取全文） ----------
+
+let fetchModalState = null;
+
+function openFetchPaperModal(trigger) {
+  closeFetchPaperModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "fetchModalOverlay" });
+  const modal = h("div", {
+    class: "modal modal--wide",
+    id: "fetchModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "fetchModalTitle",
+    tabindex: "-1",
+  });
+
+  const client = createLiteratureClient((url, init) => fetch(url, init));
+  const doiInput = h("input", {
+    type: "text",
+    id: "fetchDoi",
+    autocomplete: "off",
+    placeholder: "如 10.1234/abcde",
+    "aria-label": "DOI",
+  });
+  const doiBtn = h("button", { class: "btn btn-primary", type: "button", id: "fetchDoiBtn", text: "按 DOI 抓取" });
+  const queryInput = h("input", {
+    type: "text",
+    id: "fetchQuery",
+    autocomplete: "off",
+    placeholder: "标题关键词",
+    "aria-label": "标题关键词",
+  });
+  const queryBtn = h("button", { class: "btn", type: "button", id: "fetchQueryBtn", text: "按标题检索" });
+  const status = h("p", { class: "aux fetch-status", role: "status" });
+  const results = h("div", { class: "fetch-results" });
+  const closeBtn = h("button", { class: "btn", type: "button", id: "fetchClose", text: "关闭" });
+
+  function fetchItem(info) {
+    const useBtn = h("button", { class: "btn btn-primary", type: "button", text: "用此文献新建项目" });
+    const item = h("div", { class: "fetch-item" },
+      h("p", { class: "fetch-item-title", text: info.title }),
+      h("p", { class: "aux", text: [info.authors, info.year, info.venue].filter(Boolean).join(" · ") || "（缺作者/年份/出处）" }),
+      h("p", { class: "aux mono", text: info.doi ? `DOI ${info.doi}` : "无 DOI" }),
+      h("div", { class: "suggestion-actions" }, useBtn),
+    );
+    useBtn.addEventListener("click", () => {
+      closeFetchPaperModal(false);
+      openCreateProjectModal(trigger, {
+        prefillName: info.title,
+        paperMeta: {
+          source: "crossref",
+          doi: info.doi,
+          title: info.title,
+          authors: info.authors,
+          year: info.year,
+          venue: info.venue,
+        },
+      });
+    });
+    return item;
+  }
+
+  async function runFetch(button, action) {
+    button.disabled = true;
+    status.classList.remove("fetch-error");
+    status.textContent = "抓取中…";
+    clear(results);
+    try {
+      const list = await action();
+      for (const info of list) results.append(fetchItem(info));
+      status.textContent = list.length > 0 ? `共 ${list.length} 条结果` : "没有找到匹配文献";
+    } catch (error) {
+      status.textContent = error && error.message ? error.message : String(error);
+      status.classList.add("fetch-error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  doiBtn.addEventListener("click", () => {
+    runFetch(doiBtn, async () => [await client.fetchByDoi(doiInput.value)]);
+  });
+  queryBtn.addEventListener("click", () => {
+    runFetch(queryBtn, () => client.searchByTitle(queryInput.value));
+  });
+  doiInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      doiBtn.click();
+    }
+  });
+  queryInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      queryBtn.click();
+    }
+  });
+  closeBtn.addEventListener("click", () => closeFetchPaperModal());
+
+  modal.append(
+    h("h2", { id: "fetchModalTitle", text: "抓取文献" }),
+    h("p", { class: "aux", text: "来源 Crossref 公共接口，仅获取文献元数据（题名/作者/年份/出处），不抓取全文。" }),
+    h("div", { class: "parse-line" },
+      h("div", { class: "field" },
+        h("label", { for: "fetchDoi", text: "DOI 精确查询" }),
+        doiInput,
+      ),
+      doiBtn,
+    ),
+    h("div", { class: "parse-line" },
+      h("div", { class: "field" },
+        h("label", { for: "fetchQuery", text: "标题关键词检索" }),
+        queryInput,
+      ),
+      queryBtn,
+    ),
+    status,
+    results,
+    h("div", { class: "modal-actions" }, closeBtn),
+  );
+
+  fetchModalState = { trigger, overlay };
+  attachModalBehavior(overlay, modal, closeFetchPaperModal);
+  doiInput.focus();
+}
+
+function closeFetchPaperModal(restoreFocus = true) {
+  const current = fetchModalState;
+  if (!current) return;
+  current.overlay.remove();
+  fetchModalState = null;
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
 }
 
@@ -2304,6 +2918,34 @@ navBtn.addEventListener("click", () => {
 // 侧栏为动态渲染：链接点击（含树内导航）后收起移动端抽屉
 document.getElementById("sideNav").addEventListener("click", (event) => {
   if (event.target.closest("a")) closeNav();
+});
+
+// ---------- 拖放导入 PDF（与「导入 PDF」按钮同一条本地解析路径） ----------
+
+const dropOverlay = h("div", {
+  id: "dropOverlay",
+  class: "drop-overlay",
+  hidden: true,
+  "aria-hidden": "true",
+  text: "松开以导入 PDF",
+});
+document.body.append(dropOverlay);
+
+window.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer || ![...event.dataTransfer.types].includes("Files")) return;
+  event.preventDefault();
+  dropOverlay.hidden = false;
+});
+window.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) dropOverlay.hidden = true;
+});
+window.addEventListener("drop", (event) => {
+  dropOverlay.hidden = true;
+  if (!event.dataTransfer) return;
+  const file = [...event.dataTransfer.files].find((item) => item.name.toLowerCase().endsWith(".pdf"));
+  if (!file) return;
+  event.preventDefault();
+  importPdfFile(file, null);
 });
 
 window.addEventListener("hashchange", () => {

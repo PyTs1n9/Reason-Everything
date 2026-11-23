@@ -26,6 +26,7 @@ const sources = [
   "src/agent/service.ts",
   "src/workflow/service.ts",
   "src/web/model.ts",
+  "src/web/literature.ts",
 ];
 
 for (const rel of sources) {

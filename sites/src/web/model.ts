@@ -44,22 +44,96 @@ export function parseProjectTypes(raw: string | null): Record<string, string> {
   return out;
 }
 
-// ---------- 快捷操作提示（卡 14） ----------
+// ---------- 工作台统计 / 搜索高亮 / 置顶排序（卡 15） ----------
 
-/**
- * 快捷操作按钮的如实响应文案。
- * 产品当前没有 PDF 导入与文献抓取能力（无第三方依赖、无外网采集），
- * 点击后如实说明并指向现有入口，绝不伪造执行结果。
- */
-export function quickActionMessage(action: "import_pdf" | "fetch_paper"): string {
-  switch (action) {
-    case "import_pdf":
-      return "PDF 导入尚未实现：当前实验记录支持 CSV/TSV 粘贴或上传，请在项目内「新建研究问题」导入。";
-    case "fetch_paper":
-      return "抓取文献尚未实现：本版本不联网抓取外部文献，请手动提供实验记录。";
-    default:
-      throw new Error(`未知快捷操作: ${String(action)}`);
+export interface DashboardStats {
+  projectCount: number;
+  questionCount: number;
+  /** updatedAt 落在 (now-7d, now] 内的项目数。 */
+  weekUpdated: number;
+}
+
+/** KPI 统计：项目数、研究问题总数、近 7 天更新数；坏时间戳不计入更新数。 */
+export function computeDashboardStats(projects: readonly ProjectSummary[], now: string): DashboardStats {
+  const nowMs = Date.parse(now);
+  let questionCount = 0;
+  let weekUpdated = 0;
+  for (const project of projects) {
+    questionCount += project.questionCount;
+    const updatedMs = Date.parse(project.updatedAt);
+    if (Number.isNaN(nowMs) || Number.isNaN(updatedMs)) continue;
+    if (updatedMs > nowMs - 7 * 24 * 60 * 60 * 1000 && updatedMs <= nowMs) weekUpdated += 1;
   }
+  return { projectCount: projects.length, questionCount, weekUpdated };
+}
+
+export interface HighlightSegment {
+  text: string;
+  hit: boolean;
+}
+
+/** 名称按查询词（大小写不敏感、trim）切分为高亮/非高亮片段；空查询或无匹配返回单段原文。 */
+export function highlightMatches(name: string, query: string): HighlightSegment[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [{ text: name, hit: false }];
+  const lower = name.toLowerCase();
+  const segments: HighlightSegment[] = [];
+  let index = 0;
+  for (;;) {
+    const at = lower.indexOf(q, index);
+    if (at < 0) break;
+    if (at > index) segments.push({ text: name.slice(index, at), hit: false });
+    segments.push({ text: name.slice(at, at + q.length), hit: true });
+    index = at + q.length;
+  }
+  if (segments.length === 0) return [{ text: name, hit: false }];
+  if (index < name.length) segments.push({ text: name.slice(index), hit: false });
+  return segments;
+}
+
+/** 置顶项目（本机 UI 元数据）优先，两组各自按更新时间倒序；坏时间戳按最早处理。 */
+export function sortProjects(
+  list: readonly ProjectSummary[],
+  pinnedIds: ReadonlySet<string>,
+): ProjectSummary[] {
+  const byUpdatedDesc = (a: ProjectSummary, b: ProjectSummary): number => {
+    const ta = Date.parse(a.updatedAt);
+    const tb = Date.parse(b.updatedAt);
+    return (Number.isNaN(tb) ? -Infinity : tb) - (Number.isNaN(ta) ? -Infinity : ta);
+  };
+  return [
+    ...list.filter((p) => pinnedIds.has(p.projectId)).sort(byUpdatedDesc),
+    ...list.filter((p) => !pinnedIds.has(p.projectId)).sort(byUpdatedDesc),
+  ];
+}
+
+/** 项目类型 → 色板 class 后缀（六类型固定色；字典外随 normalizeProjectType 归「其他」）。 */
+export function typeColorClass(type: string): string {
+  switch (normalizeProjectType(type)) {
+    case "计算机科学":
+      return "type-cs";
+    case "数学":
+      return "type-math";
+    case "生物学":
+      return "type-bio";
+    case "医学":
+      return "type-med";
+    case "经济学":
+      return "type-econ";
+    default:
+      return "type-other";
+  }
+}
+
+/** PDF 题名：元数据优先，退回全文首行；均无则空串（不猜题名）。 */
+export function extractPaperTitle(input: { metaTitle?: string; firstPageText?: string }): string {
+  const meta = (input.metaTitle ?? "").trim();
+  if (meta) return meta.slice(0, 120);
+  const line = (input.firstPageText ?? "")
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .find((part) => part.length > 0);
+  return line ? line.slice(0, 120) : "";
 }
 
 // ---------- 侧栏树（卡 13：知识库 → 项目文件夹 → 问题文档） ----------

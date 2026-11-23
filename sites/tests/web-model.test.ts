@@ -5,14 +5,19 @@ import type { ProjectSummary } from "../src/experiment/storage.ts";
 import type { TrainingRun } from "../src/experiment/types.ts";
 import {
   buildSideTree,
+  computeDashboardStats,
   deriveLrOptions,
   evaluateEntryMissing,
+  extractPaperTitle,
   filterProjects,
   formatUpdatedAt,
+  highlightMatches,
   modelGlyph,
   normalizeProjectType,
   parseProjectTypes,
+  sortProjects,
   statusGlyph,
+  typeColorClass,
 } from "../src/web/model.ts";
 
 function project(projectId: string, name: string, updatedAt: string): ProjectSummary {
@@ -228,15 +233,78 @@ test("侧栏树：无项目返回空数组，缺项目键视为空文件夹", ()
   assert.deepEqual(tree, [{ projectId: "p9", name: "孤岛", questions: [] }]);
 });
 
-// ---------- 卡 14：快捷操作提示 ----------
+// ---------- 卡 15：工作台统计 / 搜索高亮 / 置顶排序 / 类型配色 / PDF 题名 ----------
 
-test("快捷操作提示如实说明未实现并指向现有入口，未知动作抛错", async () => {
-  const { quickActionMessage } = await import("../src/web/model.ts");
-  const pdf = quickActionMessage("import_pdf");
-  assert.match(pdf, /尚未实现/);
-  assert.match(pdf, /CSV\/TSV/);
-  const paper = quickActionMessage("fetch_paper");
-  assert.match(paper, /尚未实现/);
-  assert.match(paper, /不联网/);
-  assert.throws(() => quickActionMessage(/** @type {any} */ ("unknown")), /未知快捷操作/);
+test("工作台统计：项目数/问题总数/近 7 天更新，边界与坏时间戳不计入", () => {
+  const now = "2026-11-23T12:00:00.000Z";
+  const list = [
+    { ...project("p1", "甲", "2026-11-22T10:00:00.000Z"), questionCount: 3 },
+    { ...project("p2", "乙", "2026-11-20T10:00:00.000Z"), questionCount: 1 },
+    { ...project("p3", "丙", "2026-11-01T10:00:00.000Z"), questionCount: 2 },
+  ];
+  assert.deepEqual(computeDashboardStats(list, now), {
+    projectCount: 3,
+    questionCount: 6,
+    weekUpdated: 2,
+  });
+  assert.deepEqual(computeDashboardStats([], now), { projectCount: 0, questionCount: 0, weekUpdated: 0 });
+
+  const edge = [
+    project("p1", "恰在边界", "2026-11-16T12:00:00.000Z"),
+    project("p2", "未来时间", "2026-11-24T12:00:00.000Z"),
+    project("p3", "坏值", "not-a-date"),
+  ];
+  assert.deepEqual(computeDashboardStats(edge, now), { projectCount: 3, questionCount: 0, weekUpdated: 0 });
+  assert.equal(computeDashboardStats([project("p1", "边界内", "2026-11-16T12:00:00.001Z")], now).weekUpdated, 1);
+});
+
+test("搜索高亮：大小写不敏感多段切分，空查询/无匹配/空名返回单段", () => {
+  assert.deepEqual(highlightMatches("增强开关研究", ""), [{ text: "增强开关研究", hit: false }]);
+  assert.deepEqual(highlightMatches("增强开关研究", "不存在"), [{ text: "增强开关研究", hit: false }]);
+  assert.deepEqual(highlightMatches("增强开关研究", "  增强 "), [
+    { text: "增强", hit: true },
+    { text: "开关研究", hit: false },
+  ]);
+  assert.deepEqual(highlightMatches("abcABC", "bc"), [
+    { text: "a", hit: false },
+    { text: "bc", hit: true },
+    { text: "A", hit: false },
+    { text: "BC", hit: true },
+  ]);
+  assert.deepEqual(highlightMatches("DataFlow", "data"), [
+    { text: "Data", hit: true },
+    { text: "Flow", hit: false },
+  ]);
+  assert.deepEqual(highlightMatches("", "x"), [{ text: "", hit: false }]);
+});
+
+test("置顶排序：置顶优先且两组按更新时间倒序，坏时间戳排最后，不改输入", () => {
+  const list = [
+    project("p1", "甲", "2026-11-23T10:00:00.000Z"),
+    project("p2", "乙", "2026-11-22T10:00:00.000Z"),
+    project("p3", "丙", "2026-11-21T10:00:00.000Z"),
+    project("p4", "丁", "not-a-date"),
+  ];
+  assert.deepEqual(sortProjects(list, new Set(["p3", "p4"])).map((p) => p.projectId), ["p3", "p4", "p1", "p2"]);
+  assert.deepEqual(sortProjects(list, new Set()).map((p) => p.projectId), ["p1", "p2", "p3", "p4"]);
+  assert.deepEqual(list.map((p) => p.projectId), ["p1", "p2", "p3", "p4"]);
+});
+
+test("类型配色：六类型固定色，字典外归「其他」灰", () => {
+  assert.equal(typeColorClass("计算机科学"), "type-cs");
+  assert.equal(typeColorClass("数学"), "type-math");
+  assert.equal(typeColorClass("生物学"), "type-bio");
+  assert.equal(typeColorClass("医学"), "type-med");
+  assert.equal(typeColorClass("经济学"), "type-econ");
+  assert.equal(typeColorClass("其他"), "type-other");
+  assert.equal(typeColorClass("天文学"), "type-other");
+  assert.equal(typeColorClass(""), "type-other");
+});
+
+test("PDF 题名：元数据优先，退回首页非空行，均无返回空串且截断 120 字", () => {
+  assert.equal(extractPaperTitle({ metaTitle: "  论文标题  ", firstPageText: "首行" }), "论文标题");
+  assert.equal(extractPaperTitle({ metaTitle: "", firstPageText: "\n  \n  Real Title\nRest" }), "Real Title");
+  assert.equal(extractPaperTitle({}), "");
+  assert.equal(extractPaperTitle({ metaTitle: "", firstPageText: "   \n\n" }), "");
+  assert.equal(extractPaperTitle({ metaTitle: "x".repeat(200) }).length, 120);
 });
