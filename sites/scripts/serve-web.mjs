@@ -20,6 +20,12 @@ createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     let path = decodeURIComponent(url.pathname);
+    // 根路径直接出站内页会让相对资源解析到 /assets/*（404 无样式），重定向到真实入口
+    if (path === "/") {
+      res.writeHead(302, { location: "/web/index.html" });
+      res.end();
+      return;
+    }
     if (path.endsWith("/")) path += "web/index.html";
     const file = normalize(join(root, path));
     if (!file.startsWith(root)) {

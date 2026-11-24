@@ -12,12 +12,14 @@ import {
   buildSideTree,
   computeDashboardStats,
   deriveLrOptions,
+  describeCellId,
   evaluateEntryMissing,
   extractPaperTitle,
   filterProjects,
   formatAccuracy,
   formatUpdatedAt,
   highlightMatches,
+  humanizeCellIds,
   modelGlyph,
   normalizeProjectType,
   parseProjectTypes,
@@ -1409,7 +1411,7 @@ async function renderProject(projectId) {
 const entry = {
   projectId: null,
   rawClaim: "",
-  dataMode: "paste",
+  dataMode: "",
   dataText: "",
   accuracyUnit: "percent",
   unknownRoles: {},
@@ -1432,7 +1434,7 @@ function resetEntry(projectId) {
   Object.assign(entry, {
     projectId,
     rawClaim: "",
-    dataMode: "paste",
+    dataMode: "",
     dataText: "",
     accuracyUnit: "percent",
     unknownRoles: {},
@@ -1502,10 +1504,10 @@ async function renderNewQuestion(projectId) {
   const pasteId = "pasteInput";
   const fileId = "fileInput";
   const dataSection = h("section", { class: "form-section", "aria-labelledby": "dataTitle" },
-    h("h2", { class: "form-section-title", id: "dataTitle", text: "数据输入" }),
+    h("h2", { class: "form-section-title", id: "dataTitle" }, "数据输入", h("span", { class: "req-badge", text: "必选" })),
     h("div", { class: "input-mode", role: "radiogroup", "aria-label": "数据输入方式" },
       h("label", {},
-        h("input", { type: "radio", name: "dataMode", value: "paste", checked: true, id: "modePaste" }),
+        h("input", { type: "radio", name: "dataMode", value: "paste", id: "modePaste" }),
         "粘贴 TSV/CSV",
       ),
       h("label", {},
@@ -1513,7 +1515,8 @@ async function renderNewQuestion(projectId) {
         "上传 CSV 文件",
       ),
     ),
-    h("div", { class: "field", id: "pasteField" },
+    h("p", { class: "choice-hint", id: "dataModeHint" }, "请选择输入方式（二选一）"),
+    h("div", { class: "field", id: "pasteField", hidden: true },
       h("label", { for: pasteId, text: "粘贴表格文本（首行为表头）" }),
       h("textarea", {
         id: pasteId,
@@ -1563,7 +1566,7 @@ async function renderNewQuestion(projectId) {
   // 范围
   const lrHost = h("div", { id: "lrHost" });
   const scopeSection = h("section", { class: "form-section", "aria-labelledby": "scopeTitle" },
-    h("h2", { class: "form-section-title", id: "scopeTitle", text: "问题范围" }),
+    h("h2", { class: "form-section-title", id: "scopeTitle" }, "问题范围", h("span", { class: "req-badge", text: "必选" })),
     h("div", { class: "scope-row", role: "radiogroup", "aria-label": "问题范围" },
       h("label", {},
         h("input", { type: "radio", name: "scope", value: "target_lr", id: "scopeTarget" }),
@@ -1574,6 +1577,7 @@ async function renderNewQuestion(projectId) {
         "两档都验证",
       ),
     ),
+    h("p", { class: "choice-hint", id: "scopeHint" }, "请选择验证范围（二选一）"),
     lrHost,
   );
 
@@ -1644,6 +1648,7 @@ async function renderNewQuestion(projectId) {
       entry.dataMode = document.querySelector('input[name="dataMode"]:checked').value;
       document.getElementById("pasteField").hidden = entry.dataMode !== "paste";
       document.getElementById("fileField").hidden = entry.dataMode !== "file";
+      document.getElementById("dataModeHint").hidden = true;
     });
   }
 
@@ -1666,6 +1671,7 @@ async function renderNewQuestion(projectId) {
   for (const radio of document.querySelectorAll('input[name="scope"]')) {
     radio.addEventListener("change", () => {
       entry.scope = document.querySelector('input[name="scope"]:checked').value;
+      document.getElementById("scopeHint").hidden = true;
       renderLrHost();
     });
   }
@@ -1907,6 +1913,8 @@ async function renderNewQuestion(projectId) {
         scope: entry.scope,
         targetLr: entry.scope === "target_lr" ? entry.targetLr : null,
       });
+      // 输入方式是表单必选项（纯函数不感知 UI 模式，缺项在显示层补齐）
+      if (!entry.dataMode) missing.unshift("数据输入方式");
       if (missing.length > 0) {
         submitStatus.textContent = `草稿已保存（${entry.createdQuestionId}）；还缺：${missing.join("、")}`;
         return;
@@ -1991,8 +1999,8 @@ const STEP_LABELS = [
   { kind: "rules", label: "查找对照" },
   { kind: "model", label: "模型分析" },
 ];
-const STEP_TEXT = { pending: "待运行", running: "运行中", done: "完成", failed: "失败" };
-const STEP_GLYPH = { pending: "○", running: "◐", done: "●", failed: "✕" };
+const STEP_TEXT = { pending: "待运行", running: "运行中", done: "完成", failed: "失败", unavailable: "未接通" };
+const STEP_GLYPH = { pending: "○", running: "◐", done: "●", failed: "✕", unavailable: "○" };
 
 function nodeStepState(node, events, parseDone) {
   if (node === "parse") return parseDone ? "done" : "pending";
@@ -2001,6 +2009,12 @@ function nodeStepState(node, events, parseDone) {
   if (evs.some((e) => e.status === "completed")) return "done";
   if (evs.some((e) => e.status === "started")) return "running";
   return "pending";
+}
+
+/** 模型节点失败事件的如实区分：服务未配置=未接通（中性），其余=失败（红）。 */
+function modelStepState(events) {
+  const failed = [...events].reverse().find((e) => e.node === "model" && e.status === "failed");
+  return failed && failed.summary.includes("模型服务不可用") ? "unavailable" : "failed";
 }
 
 /** 立即渲染真实等待/错误状态（不等分析结束才显示）。 */
@@ -2133,7 +2147,12 @@ async function renderQuestion(questionId) {
     h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
     h("h1", { class: "q-claim", text: question.rawClaim || "(未填主张)" }),
     h("div", { class: "q-meta" },
-      h("span", { class: "field-inline", id: "questionIdValue", text: `问题编号 ${question.questionId}` }),
+      h("span", {
+        class: "field-inline",
+        id: "questionIdValue",
+        title: question.questionId,
+        text: `问题编号 ${shortId(question.questionId)}`,
+      }),
     ),
     meta,
   );
@@ -2144,7 +2163,8 @@ async function renderQuestion(questionId) {
   const fillSteps = (stepEvents) => {
     clear(steps);
     for (const { kind, label } of STEP_LABELS) {
-      const state = nodeStepState(kind, stepEvents, qView.parseDone);
+      let state = nodeStepState(kind, stepEvents, qView.parseDone);
+      if (kind === "model" && state === "failed") state = modelStepState(stepEvents);
       steps.append(
         h("li", { class: `step step-${state}`, dataset: { node: kind } },
           h("span", { class: "glyph", "aria-hidden": "true", text: STEP_GLYPH[state] }),
@@ -2284,7 +2304,7 @@ async function renderQuestion(questionId) {
     pkg.unmetConditions.length > 0
       ? h("div", { class: "notice", role: "status" },
           h("strong", { text: "当前缺口" }),
-          h("ul", { class: "error-list" }, pkg.unmetConditions.map((c) => h("li", { text: c }))),
+          h("ul", { class: "error-list" }, pkg.unmetConditions.map((c) => h("li", { text: humanizeCellIds(c) }))),
         )
       : null,
     table,
@@ -2324,7 +2344,11 @@ async function renderQuestion(questionId) {
         )
       : h("p", { class: "aux", text: "已配对差：尚无同条件配对（增强贡献未知）。" }),
     h("ul", { class: "plain-list" },
-      current.conclusions.map((c) => h("li", { text: `[${c.result}] ${c.ruleId}：${c.detail}` })),
+      current.conclusions.map((c) =>
+        h("li", {
+          text: `[${c.result}] ${c.ruleId.startsWith("cell@") ? `格 ${describeCellId(c.ruleId.slice(5))}` : humanizeCellIds(c.ruleId)}：${humanizeCellIds(c.detail)}`,
+        }),
+      ),
     ),
   );
 
@@ -2375,10 +2399,11 @@ async function renderQuestion(questionId) {
       h("p", { class: "model-meta", text: `模型标识：${analysis.provider} · ${analysis.model} · ${analysis.promptVersion} · 作业 ${viewedJob ? viewedJob.jobId : "—"} · 生成于 ${formatUpdatedAt(analysis.createdAt)}` }),
     );
   } else {
+    const unavailable = current.modelOutput === "unavailable";
     const reason = modelEvent && modelEvent.status === "failed" ? modelEvent.summary : `模型输出状态：${modelGlyph(current.modelOutput).text}`;
     aiBody.append(
-      h("div", { class: "notice notice-error", role: "status" },
-        h("strong", { text: `AI 分析未完成（${modelGlyph(current.modelOutput).text}）` }),
+      h("div", { class: unavailable ? "notice" : "notice notice-error", role: "status" },
+        h("strong", { text: unavailable ? "AI 未接通（模型服务未配置）" : `AI 分析未完成（${modelGlyph(current.modelOutput).text}）` }),
         h("p", { text: reason }),
         h("p", { class: "aux", text: "矩阵与规则解释不受影响，可继续查看。" }),
       ),
@@ -2386,6 +2411,7 @@ async function renderQuestion(questionId) {
         class: "btn",
         type: "button",
         id: "retryModel",
+        disabled: unavailable,
         text: "重试模型分析",
         onclick: async (event) => {
           const button = event.currentTarget;
@@ -2415,6 +2441,7 @@ async function renderQuestion(questionId) {
           await renderQuestion(questionId);
         },
       }),
+      unavailable ? h("p", { class: "aux", text: "模型服务未接通：需先在站点接入模型服务，重试才会生效。" }) : null,
     );
   }
 
@@ -2437,7 +2464,7 @@ async function renderQuestion(questionId) {
         h("div", { class: "suggestion-card", dataset: { cellId: suggestion.cellId } },
           h("div", {}, h("strong", { text: "目标条件： " }), `lr=${suggestion.lr}，增强${augLabel(String(suggestion.augmentation))}`),
           h("div", {}, h("strong", { text: "唯一变更： " }), changeText),
-          h("div", { class: "aux" }, `复制自 ${suggestion.copyFromRunId} · 以后与 ${suggestion.compareToRunId ?? `同档另一格 ${suggestion.cellId}`} 比较`),
+          h("div", { class: "aux" }, `复制自 ${suggestion.copyFromRunId} · 以后与 ${suggestion.compareToRunId ?? `同档另一格 ${describeCellId(suggestion.cellId)}`} 比较`),
           h("div", { class: "suggestion-actions" },
             h("button", { class: "btn", type: "button", text: "复制补跑配置", onclick: (e) => copySuggestion(suggestion, e.currentTarget) }),
             h("button", { class: "btn", type: "button", text: "录入实测结果", onclick: (e) => openDrawer("backfill", suggestion, e.currentTarget) }),
@@ -2510,7 +2537,14 @@ async function renderQuestion(questionId) {
         detailHost.append(
           h("p", { class: "detail-title", text: "证据说明" }),
           h("p", { text: factLabel(fact, pkg) }),
-          h("p", { class: "aux", text: `编号 ${fact.factId}${fact.cellId ? ` · 关联格 ${fact.cellId}` : ""}${fact.runIds && fact.runIds.length ? ` · 关联运行 ${fact.runIds.join("、")}` : ""}` }),
+          h("p", { class: "aux" },
+            "编号 ",
+            h("span", { title: fact.factId, text: shortId(fact.factId) }),
+            fact.cellId
+              ? h("span", { title: fact.cellId, text: ` · 关联格 ${describeCellId(fact.cellId)}` })
+              : "",
+            fact.runIds && fact.runIds.length ? ` · 关联运行 ${fact.runIds.join("、")}` : "",
+          ),
         );
         return;
       }
@@ -2549,7 +2583,7 @@ async function renderQuestion(questionId) {
                   h("dt", { text: "复制运行" }), h("dd", { text: suggestion.copyFromRunId }),
                   h("dt", { text: "唯一变更" }), h("dd", { text: suggestion.change.map((c) => `${c.field}: ${String(c.from)} → ${String(c.to)}`).join("；") || "无需变更" }),
                   h("dt", { text: "固定条件" }), h("dd", { text: suggestion.keepConditions.map((c) => `${c.field}=${String(c.value)}`).join("，") }),
-                  h("dt", { text: "以后比较" }), h("dd", { text: suggestion.compareToRunId ?? `同档另一格 ${suggestion.cellId}` }),
+                  h("dt", { text: "以后比较" }), h("dd", { text: suggestion.compareToRunId ?? `同档另一格 ${describeCellId(suggestion.cellId)}` }),
                 )
               : h("p", { class: "aux", text: "该格待确认配置（见缺口说明），暂不能生成补跑单。" }),
           );
@@ -2639,20 +2673,22 @@ function factLabel(fact, pkg) {
   switch (fact.kind) {
     case "cell-measured": {
       const cell = pkg.cells.find((c) => c.cellId === fact.cellId);
-      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : fact.cellId;
+      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : describeCellId(String(fact.cellId));
       return `格 ${where}：${String(fact.runId ?? fact.value)} 实测 ${formatAccuracy(Number(fact.value))}`;
     }
     case "cell-missing": {
       const cell = pkg.cells.find((c) => c.cellId === fact.cellId);
-      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : fact.cellId;
+      const where = cell ? `${cell.lr}/${augLabel(String(cell.augmentation))}` : describeCellId(String(fact.cellId));
       return `格 ${where}：未测（缺测值为 null）`;
     }
     case "pair":
       return `配对差 lr=${pkg.pairs.find((p) => p.pairId === fact.factId)?.lr ?? "?"}：${(fact.runIds ?? []).join(" vs ")}，差 ${String(fact.value)} 个百分点`;
-    case "action":
-      return `补跑建议：${String(fact.value).slice(0, 80)}${String(fact.value).length > 80 ? "…" : ""}`;
+    case "action": {
+      const text = humanizeCellIds(String(fact.value));
+      return `补跑建议：${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`;
+    }
     case "condition":
-      return `缺口：${String(fact.value)}`;
+      return `缺口：${humanizeCellIds(String(fact.value))}`;
     case "run":
       return `运行 ${String(fact.value)}`;
     case "contribution":

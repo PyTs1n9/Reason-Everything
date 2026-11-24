@@ -374,6 +374,11 @@ label {
   gap: 6px;
 }
 
+/* display:flex 会覆盖 [hidden] 的 UA 样式（卡 15/16/18 同类教训） */
+.field[hidden] {
+  display: none;
+}
+
 input[type="text"],
 input[type="search"],
 input[type="number"],
@@ -626,6 +631,31 @@ select:focus-visible,
   min-height: 32px;
 }
 
+/* 卡 19：两组单选统一「必选」表达（无默认 + 空态提示） */
+.req-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--amber-line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  vertical-align: middle;
+  color: var(--amber);
+}
+
+.choice-hint {
+  margin: -8px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--meta-ink);
+}
+
+.choice-hint[hidden] {
+  display: none;
+}
+
 .parse-line {
   display: flex;
   gap: 16px;
@@ -792,6 +822,10 @@ select:focus-visible,
 
 .step-failed {
   color: var(--danger-deep);
+}
+
+.step-unavailable {
+  color: var(--meta-ink);
 }
 
 /* 两栏主体：≥1200px minmax(0,1fr) 344px gap 24；以下纵向排列 */

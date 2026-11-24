@@ -242,6 +242,22 @@ export function evaluateEntryMissing(state: EntryFormState): string[] {
   return missing;
 }
 
+/** cellId（cell:项目:因素:指标:学习率:开关）→ 可读标签；格式不符原样返回。仅显示层使用。 */
+export function describeCellId(cellId: string): string {
+  const parts = cellId.split(":");
+  if (parts.length !== 6 || parts[0] !== "cell") return cellId;
+  const aug = parts[5] === "on" ? "增强开" : parts[5] === "off" ? "增强关" : parts[5];
+  return `${parts[4]}/${aug}`;
+}
+
+/** 把文本中的 cellId 全部替换为可读标签；不改存储文本，仅显示层使用。 */
+export function humanizeCellIds(text: string): string {
+  return String(text).replace(
+    /cell:[^:\s：]+:[^:\s：]+:[^:\s：]+:[^:\s：]+:[^:\s：]+/g,
+    (id) => describeCellId(id),
+  );
+}
+
 /** 问题状态 → 文字 + 形状（状态不得只靠颜色）。 */
 export function statusGlyph(status: string): { glyph: string; text: string } {
   switch (status) {
