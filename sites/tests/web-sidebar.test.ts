@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { inflateSync } from "node:zlib";
 import {
   SIDEBAR_COLLAPSED_KEY,
   SIDEBAR_DEFAULT_WIDTH,
@@ -26,6 +27,62 @@ function ruleBody(source: string, selector: string): string {
   const open = source.indexOf("{", at);
   const close = source.indexOf("}", open);
   return source.slice(open + 1, close);
+}
+
+function readRgbaPng(path: string | URL): { width: number; height: number; alpha: Buffer } {
+  const png = readFileSync(path);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const idat: Buffer[] = [];
+  let width = 0;
+  let height = 0;
+  for (let offset = 8; offset < png.length;) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    const data = png.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      assert.equal(data[8], 8, "PNG 位深必须为 8");
+      assert.equal(data[9], 6, "PNG 必须包含 RGBA 透明通道");
+      assert.equal(data[12], 0, "PNG 必须为非交错格式");
+    }
+    if (type === "IDAT") idat.push(data);
+    offset += length + 12;
+    if (type === "IEND") break;
+  }
+  assert.ok(width > 0 && height > 0 && idat.length > 0, "PNG 头或像素数据缺失");
+  const packed = inflateSync(Buffer.concat(idat));
+  const stride = width * 4;
+  assert.equal(packed.length, height * (stride + 1), "PNG 解压像素长度不符");
+  const alpha = Buffer.alloc(width * height);
+  let previous = Buffer.alloc(stride);
+  for (let y = 0; y < height; y += 1) {
+    const start = y * (stride + 1);
+    const filter = packed[start];
+    const row = Buffer.from(packed.subarray(start + 1, start + 1 + stride));
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= 4 ? row[x - 4] : 0;
+      const up = previous[x];
+      const upperLeft = x >= 4 ? previous[x - 4] : 0;
+      let predictor = 0;
+      if (filter === 1) predictor = left;
+      else if (filter === 2) predictor = up;
+      else if (filter === 3) predictor = Math.floor((left + up) / 2);
+      else if (filter === 4) {
+        const estimate = left + up - upperLeft;
+        const leftDistance = Math.abs(estimate - left);
+        const upDistance = Math.abs(estimate - up);
+        const upperLeftDistance = Math.abs(estimate - upperLeft);
+        predictor = leftDistance <= upDistance && leftDistance <= upperLeftDistance
+          ? left
+          : upDistance <= upperLeftDistance ? up : upperLeft;
+      } else assert.equal(filter, 0, "不支持的 PNG 行过滤器");
+      row[x] = (row[x] + predictor) & 255;
+      if (x % 4 === 3) alpha[y * width + Math.floor(x / 4)] = row[x];
+    }
+    previous = row;
+  }
+  return { width, height, alpha };
 }
 
 function mediaAfterMarker(query: string): string {
@@ -127,6 +184,35 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
   assert.match(js, /--leaf-drift/);
   assert.match(js, /animationend/);
   assert.match(js, /emitSidebarLeaves\(\);/);
+});
+
+test("PNG 素材：三张正式位图具备透明通道、干净边缘与右下角无水印", () => {
+  const expected = [
+    ["sidebar-winding-tree.png", 337, 2048],
+    ["sidebar-feather.png", 768, 1024],
+    ["sidebar-leaf.png", 1024, 1024],
+  ];
+  for (const [name, width, height] of expected) {
+    const image = readRgbaPng(new URL(`../web/assets/${name}`, import.meta.url));
+    assert.equal(image.width, width, `${name} 宽度不符`);
+    assert.equal(image.height, height, `${name} 高度不符`);
+    let transparent = 0;
+    for (const value of image.alpha) if (value === 0) transparent += 1;
+    assert.ok(transparent / image.alpha.length > 0.5, `${name} 透明像素不足`);
+    for (let x = 0; x < image.width; x += 1) {
+      assert.equal(image.alpha[x], 0, `${name} 上边缘不透明`);
+      assert.equal(image.alpha[(image.height - 1) * image.width + x], 0, `${name} 下边缘不透明`);
+    }
+    for (let y = 0; y < image.height; y += 1) {
+      assert.equal(image.alpha[y * image.width], 0, `${name} 左边缘不透明`);
+      assert.equal(image.alpha[y * image.width + image.width - 1], 0, `${name} 右边缘不透明`);
+    }
+    for (let y = Math.floor(image.height * 0.75); y < image.height; y += 1) {
+      for (let x = Math.floor(image.width * 0.75); x < image.width; x += 1) {
+        assert.equal(image.alpha[y * image.width + x], 0, `${name} 右下角残留水印或背景`);
+      }
+    }
+  }
 });
 
 test("CSS：可变栏宽、收起归零、拖动把手与羽毛不拦截交互", () => {

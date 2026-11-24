@@ -266,13 +266,13 @@
 - **验收命令**：`node --test --test-name-pattern="项目卡片操作区" tests/web-ux.test.ts` = 1/1 pass、exit 0；`npm run build:web` = exit 0；`npm run verify:flow` = exit 0；根目录 `git diff --check` = exit 0。`npm test` = **265/269 pass、exit 1**；4 个失败均非本卡范围：`web-paper-compare` 的项目标题旧类名断言、`web-sidebar` 的 `.nav-btn` 旧正则、`web-ux` 的旧模型提示文案与根路径旧条件，未越界修改。
 - **未测/受限**：in-app 浏览器指针视口为 0×0，原生点击/截图不可用，本轮以脚本派发真实 DOM 事件、计算样式与命中测试留证；真实模型与云存储状态不变。**本次没做**：未修上述前序/并发改动导致的旧断言，未提交卡 24 或其他未提交文件，未改站点访问范围。
 
-## 卡 R2 · 研究库可拖动侧栏、树木拖动条与透明 PNG 骨架（2026-11-25）
+## 卡 R2 · 研究库可拖动侧栏、树木拖动条与透明 PNG 素材（2026-11-25）
 
-- **交付**：研究库按钮常显；≥1200px 侧栏支持 Pointer Events 拖动调宽（默认 248px、范围 208–420px）、左右键 / Home / End 微调及宽度/收起状态持久化，桌面收起将网格轨道和侧栏宽度归零；≤1199px 保留 260px 抽屉，Escape 关闭并回焦，≤767px 按钮为 44×44px。交互保留 SVG 回退，同时预留 `sidebar-winding-tree.png`、`sidebar-leaf.png`、`sidebar-feather.png` 三个真实透明位图槽位；位图加载后树木替换拖动把手、PNG 羽毛替换 SVG，拖动时从树梢生成落叶（每 90ms 最多 2 片、同时最多 12 片、1100ms 后清理）。支持减少动效、减少透明度及粗指针降级。
-- **离线测试**：`src/web/sidebar.ts` 与 `tests/web-sidebar.test.ts` 共 10 项，覆盖宽度边界/坏值、键盘、状态分流、持久化、Pointer Events 与多点保护、ARIA、响应式、PNG 接线、落叶上限及构建接线。主工作区 `node --test tests/web-sidebar.test.ts tests/web-reader-layout.test.ts tests/web-follow.test.ts` 首次 **23/23 pass、exit 0**，并行改动后复核 **22/23 pass、exit 1**（唯一失败为 `web-follow` 缺少 `.topbar-back-full`，非本卡）；隔离快照 `node --test tests/web-sidebar.test.ts tests/web-follow.test.ts` = **14/14 pass、exit 0**。
-- **浏览器实测（隔离快照，同源 iframe，临时测试素材与服务均已移除）**：1440×900 加载 PNG 后树木/羽毛就绪，树木框 144×868px、`object-fit: cover`、把手宽 24px，拖动宽度 248→288→308px，受控序列生成 6 片落叶并自然清理，收起后网格 0/1440px；390×844 按钮 44×44px、抽屉宽 260px、top 56px、横向溢出 0。主工作区缺失 PNG 时保留 SVG 回退、树木隐藏、网格 248/1192px；主工作区临时 PNG 验证拖动落叶与移动端布局，手动派发 `animationend` 验证清理。in-app 浏览器视口仍不可见，未取得可见截图。
-- **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）、`node --check web/assets/study.js`、`git diff --check` 均 exit 0（仅 CRLF 转换提示）。隔离快照 `npm test` = **230/230 pass、exit 0**；主工作区含并发未提交测试的 `npm test` = **292/295 pass、exit 1**，3 个失败均非本卡改动：`web-follow.test.ts` 缺少 `.topbar-back-full`，以及 `web-ux.test.ts` 旧模型提示文案和根路径旧条件。
-- **未测/受限**：`ImageGen` 返回 HTTP 403，未生成最终 PNG，也未用 SVG 或网络图片冒充；最终树木/落叶/羽毛的视觉验收待用户提供透明 PNG。拖动使用脚本 PointerEvent 并临时补齐合成事件的 pointer capture，不冒充物理鼠标证明。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未修非本卡失败、未改业务 schema、模型服务、其他页面、依赖、站点访问范围或其他卡冻结契约，未纳入并发未提交改动。
+- **交付**：研究库按钮常显；≥1200px 侧栏支持 Pointer Events 拖动调宽（默认 248px、范围 208–420px）、左右键 / Home / End 微调及宽度/收起状态持久化，桌面收起将网格轨道和侧栏宽度归零；≤1199px 保留 260px 抽屉，Escape 关闭并回焦，≤767px 按钮为 44×44px。用户提供的树木、羽毛与银杏叶已处理并导入 `sidebar-winding-tree.png`（337×2048）、`sidebar-feather.png`（768×1024）、`sidebar-leaf.png`（1024×1024）：按行估计背景色后生成 Alpha、清除右下角水印、移除孤立背景颗粒、裁掉透明边距并按网页尺寸重采样；树木底部因原图截断做透明淡出。位图加载后替换 SVG 回退，拖动时从树梢生成落叶（每 90ms 最多 2 片、同时最多 12 片、1100ms 后清理）。支持减少动效、减少透明度及粗指针降级。
+- **离线测试**：`src/web/sidebar.ts` 与 `tests/web-sidebar.test.ts` 共 11 项，覆盖宽度边界/坏值、键盘、状态分流、持久化、Pointer Events 与多点保护、ARIA、响应式、PNG 接线、落叶上限及构建接线；新增 Node 内置 `zlib` 解码三张正式 PNG，核对 RGBA、尺寸、透明像素比例、四边全透明与右下角无水印。隔离快照 `node --test tests/web-sidebar.test.ts` = **11/11 pass、exit 0**。
+- **浏览器实测（最新远端隔离快照 127.0.0.1:8371，同源 iframe，临时页与服务均已关闭）**：1440×900 下三张 PNG 全部加载，SVG 羽毛隐藏，树木框 144×876px、`object-fit: cover`、把手宽 24px；拖动宽度 248→308px，受控序列生成 6 片真实银杏叶，手动派发 `animationend` 后全部清理；收起后网格 0/1440px、侧栏宽 0。390×844 下按钮 44×44px、抽屉宽 260px、top 56px、把手隐藏、Escape 回焦、横向溢出 0；控制台无 error/warn。
+- **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。隔离快照 `npm test` = **239/239 pass、exit 0**。
+- **未测/受限**：最终素材的浅色/深色合成预览已目视检查；in-app 浏览器视口仍为 0×0，截图返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，未声称取得可见页面截图。隐藏 iframe 的 CSS 动画时间停在 0，因此本轮以手动 `animationend` 验证清理，不冒充自然播放证明；拖动使用脚本 PointerEvent 并临时补齐合成事件的 pointer capture，不冒充物理鼠标证明。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未改业务 schema、模型服务、其他页面、依赖、站点访问范围或其他卡冻结契约，未纳入并发未提交改动。
 
 ## 卡 R3 · 顶栏高度统一与项目返回入口前移（2026-11-25）
 
