@@ -271,6 +271,17 @@ p {
   border-color: var(--brand-deep);
 }
 
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--surface);
+}
+
+.btn-danger:hover {
+  background: var(--danger-deep);
+  border-color: var(--danger-deep);
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -335,6 +346,11 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* display:flex 会覆盖 [hidden] 的 UA 样式，必须显式恢复（同 .drop-overlay/.tree-children） */
+.toolbar[hidden] {
+  display: none;
 }
 
 .search-field {
@@ -1300,6 +1316,13 @@ select:focus-visible,
   flex-wrap: wrap;
 }
 
+/* 删除确认：级联警示文案 */
+.modal-warn {
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--ink);
+}
+
 /* 项目卡片网格：响应式 1/2/3 列（卡 14：grid-cols-1 md:2 lg:3） */
 
 .project-grid {
@@ -1413,6 +1436,11 @@ select:focus-visible,
 .card-action:hover {
   border-color: var(--brand);
   color: var(--brand);
+}
+
+.card-action--danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .card-action[aria-pressed="true"] {

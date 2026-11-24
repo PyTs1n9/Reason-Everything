@@ -164,6 +164,8 @@ export interface DataService {
   listProjects(actor: Actor): Promise<ProjectSummary[]>;
   getProject(actor: Actor, projectId: string): Promise<Project | null>;
   renameProject(actor: Actor, projectId: string, name: string, now: string): Promise<Project>;
+  /** 删除项目并级联清除其问题/运行/版本/作业/分析/事件/幂等键（单事务原子；卡 16 纯新增）。 */
+  deleteProject(actor: Actor, projectId: string): Promise<void>;
 
   createQuestion(
     actor: Actor,
@@ -297,6 +299,33 @@ export function createDataService(backend: StorageBackend): DataService {
         project.name = name;
         touch(project, now);
         return clone(project);
+      });
+    },
+
+    async deleteProject(actor, projectId) {
+      return backend.transact(actor, (draft) => {
+        requireProject(draft, projectId);
+        const questionIds = new Set(
+          draft.questions.filter((q) => q.projectId === projectId).map((q) => q.questionId),
+        );
+        const jobIds = new Set(
+          draft.jobs.filter((j) => questionIds.has(j.questionId)).map((j) => j.jobId),
+        );
+        draft.projects = draft.projects.filter((p) => p.projectId !== projectId);
+        draft.questions = draft.questions.filter((q) => !questionIds.has(q.questionId));
+        draft.runs = draft.runs.filter((r) => r.projectId !== projectId);
+        draft.revisions = draft.revisions.filter((r) => !questionIds.has(r.questionId));
+        draft.jobs = draft.jobs.filter((j) => !questionIds.has(j.questionId));
+        draft.analyses = draft.analyses.filter((a) => !questionIds.has(a.questionId));
+        draft.jobEvents = draft.jobEvents.filter((e) => !jobIds.has(e.jobId));
+        for (const key of Object.keys(draft.idempotency)) {
+          for (const questionId of questionIds) {
+            if (key.startsWith(`${questionId}:`)) {
+              delete draft.idempotency[key];
+              break;
+            }
+          }
+        }
       });
     },
 

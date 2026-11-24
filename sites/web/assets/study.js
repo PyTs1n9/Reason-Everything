@@ -152,6 +152,27 @@ function savePaperImport(projectId, record) {
   }
 }
 
+/** 删除项目时清理本机 UI 元数据（置顶/类型标签/导入溯源），业务存储契约不动。 */
+function removeProjectLocalMeta(projectId) {
+  const pinned = loadPinnedIds();
+  if (pinned.delete(projectId)) savePinnedIds(pinned);
+  try {
+    const types = loadProjectTypes();
+    if (projectId in types) {
+      delete types[projectId];
+      localStorage.setItem(PROJECT_TYPES_KEY, JSON.stringify(types));
+    }
+    const raw = localStorage.getItem(PAPER_IMPORTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && projectId in parsed) {
+      delete parsed[projectId];
+      localStorage.setItem(PAPER_IMPORTS_KEY, JSON.stringify(parsed));
+    }
+  } catch {
+    // 清不掉只影响本机元数据，业务删除已完成
+  }
+}
+
 async function sha256hex(buffer) {
   const digest = await crypto.subtle.digest("SHA-256", buffer);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -340,6 +361,7 @@ const ICON_GLOBE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke
 const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
 const ICON_PIN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
 const ICON_EDIT = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
+const ICON_TRASH = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 
 /** 无搜索结果插画（内联 SVG，不引图形依赖）。 */
 const ILLUSTRATION_EMPTY = '<svg viewBox="0 0 96 64" width="96" height="64" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="8" width="38" height="50" rx="4"/><line x1="24" y1="20" x2="46" y2="20"/><line x1="24" y1="28" x2="46" y2="28"/><line x1="24" y1="36" x2="38" y2="36"/><circle cx="66" cy="38" r="12"/><line x1="75" y1="47" x2="86" y2="58"/></svg>';
@@ -494,6 +516,21 @@ async function renderProjects() {
       });
     });
 
+    const deleteBtn = h("button", {
+      class: "card-action card-action--danger",
+      type: "button",
+      "aria-label": `删除项目 ${project.name}`,
+      title: "删除",
+    });
+    deleteBtn.insertAdjacentHTML("afterbegin", ICON_TRASH);
+    deleteBtn.addEventListener("click", () => {
+      openDeleteProjectModal(project, deleteBtn, async () => {
+        allProjects = await wf.listProjects(ACTOR);
+        await updateGrid();
+        await renderSidebar(parseRoute());
+      });
+    });
+
     const nameNode = h("a", { class: "card-name", href: `#/project/${project.projectId}` },
       ...highlightMatches(project.name, searchInput.value).map((seg) =>
         seg.hit ? h("mark", { class: "card-hit", text: seg.text }) : seg.text),
@@ -506,7 +543,7 @@ async function renderProjects() {
     },
       h("div", { class: "card-top" },
         h("span", { class: `card-tag ${typeColorClass(tag)}`, text: tag }),
-        h("div", { class: "card-actions" }, pinBtn, renameBtn),
+        h("div", { class: "card-actions" }, pinBtn, renameBtn, deleteBtn),
       ),
       nameNode,
       h("span", { class: "card-meta" },
@@ -963,6 +1000,71 @@ function closeRenameProjectModal(restoreFocus = true) {
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
 }
 
+// ---------- 卡片操作：删除（二级确认，级联语义见 storage.deleteProject） ----------
+
+let deleteModalState = null;
+
+function openDeleteProjectModal(project, trigger, onDeleted) {
+  closeDeleteProjectModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "deleteModalOverlay" });
+  const modal = h("div", {
+    class: "modal",
+    id: "deleteModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "deleteModalTitle",
+    tabindex: "-1",
+  });
+
+  const confirmBtn = h("button", {
+    class: "btn btn-danger",
+    type: "button",
+    id: "deleteProjectConfirm",
+    text: "确认删除",
+  });
+  const cancelBtn = h("button", { class: "btn", type: "button", id: "deleteProjectCancel", text: "取消" });
+  const error = h("p", { class: "field-error", id: "deleteModalError", hidden: true });
+
+  modal.append(
+    h("h2", { id: "deleteModalTitle", text: "删除项目" }),
+    h("p", {
+      class: "modal-warn",
+      text: `将删除项目「${project.name}」（研究问题 ${project.questionCount} 个），`
+        + "并连带清除其下全部研究问题、实验记录与分析版本。此操作不可恢复。",
+    }),
+    error,
+    h("div", { class: "modal-actions" }, confirmBtn, cancelBtn),
+  );
+
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
+    try {
+      await data.deleteProject(ACTOR, project.projectId);
+      removeProjectLocalMeta(project.projectId);
+      closeDeleteProjectModal(false);
+      toast(`已删除「${project.name}」`, "ok");
+      if (onDeleted) await onDeleted();
+    } catch (deleteError) {
+      confirmBtn.disabled = false;
+      error.hidden = false;
+      error.textContent = `删除失败：${deleteError && deleteError.message ? deleteError.message : String(deleteError)}`;
+    }
+  });
+  cancelBtn.addEventListener("click", () => closeDeleteProjectModal());
+
+  deleteModalState = { trigger, overlay };
+  attachModalBehavior(overlay, modal, closeDeleteProjectModal);
+  cancelBtn.focus();
+}
+
+function closeDeleteProjectModal(restoreFocus = true) {
+  const current = deleteModalState;
+  if (!current) return;
+  current.overlay.remove();
+  deleteModalState = null;
+  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
 // ---------- 抓取文献（Crossref 公共 API，仅取元数据不取全文） ----------
 
 let fetchModalState = null;
@@ -1138,6 +1240,7 @@ async function renderProject(projectId) {
     h("div", { class: "field search-field" },
       h("label", { for: "renameInput", text: "新的项目名" }),
       h("input", { type: "text", id: "renameInput", value: project.name, autocomplete: "off" }),
+      h("p", { class: "field-error", id: "renameRowError", role: "alert", hidden: true }),
     ),
     h("div", { class: "empty-actions" },
       h("button", { class: "btn btn-primary", type: "button", id: "renameConfirm", text: "保存" }),
@@ -1152,6 +1255,8 @@ async function renderProject(projectId) {
     renameRow.hidden = false;
     const input = document.getElementById("renameInput");
     input.value = project.name;
+    input.removeAttribute("aria-invalid");
+    document.getElementById("renameRowError").hidden = true;
     input.focus();
   });
   document.getElementById("renameCancel").addEventListener("click", () => {
@@ -1159,11 +1264,17 @@ async function renderProject(projectId) {
   });
   document.getElementById("renameConfirm").addEventListener("click", async () => {
     const input = document.getElementById("renameInput");
+    const errorNode = document.getElementById("renameRowError");
     const name = input.value.trim();
     if (!name) {
       input.setAttribute("aria-invalid", "true");
+      errorNode.hidden = false;
+      errorNode.textContent = "请填写项目名";
+      input.focus();
       return;
     }
+    input.removeAttribute("aria-invalid");
+    errorNode.hidden = true;
     // 改名走数据服务（工作流未封装改名动作，同一存储接口）
     const updated = await data.renameProject(ACTOR, projectId, name, new Date().toISOString());
     document.getElementById("projectTitle").textContent = updated.name;

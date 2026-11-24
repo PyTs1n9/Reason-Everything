@@ -455,3 +455,110 @@ test("updateClaim 更新范围并重算状态，可反复更新", async () => {
   assert.equal(updated2.confirmedClaim?.scope, "both_lrs");
   await assert.rejects(svc.updateClaim(BOB, "q_uc", claim2, T3), NotFoundError);
 });
+
+// ---------- 删除项目（卡 16） ----------
+
+test("deleteProject 级联清除项目及其问题/运行/版本/作业/分析/事件/幂等键", async () => {
+  const backend = new MemoryBackend();
+  const svc = svcOf(backend);
+  await svc.createProject(ALICE, "待删", T0, "p_demo");
+  await svc.createProject(ALICE, "保留", T0, "p_keep");
+  await importCsv(svc, ALICE, CSV_INITIAL, T1);
+  const keepRuns = previewImport(CSV_INITIAL, {
+    ...IMPORT_OPTS, projectId: "p_keep", existingRuns: [],
+  });
+  await svc.confirmImport(ALICE, { projectId: "p_keep", runs: keepRuns.added, now: T1 });
+  await svc.createQuestion(ALICE, {
+    questionId: "q_del", projectId: "p_demo",
+    rawClaim: demoQuestion.rawClaim, confirmedClaim: demoQuestion.confirmedClaim, now: T1,
+  });
+  await svc.createQuestion(ALICE, {
+    questionId: "q_keep", projectId: "p_keep", rawClaim: "保留问题", confirmedClaim: null, now: T1,
+  });
+  const pkg = await svc.verifyQuestion(ALICE, "q_del");
+  const v1runs = await svc.listRuns(ALICE, "p_demo");
+  const v1 = revisionFrom("rev_del", "q_del", null, T2,
+    demoQuestion.confirmedClaim, v1runs, conclusionsFromPackage(pkg), evidenceRunIdsOf(pkg),
+    pkg.suggestions.map((s) => s.text));
+  await svc.createRevision(ALICE, { revision: v1, idempotencyKey: "req-del", expectedParentId: null, now: T2 });
+  await svc.putJob(ALICE, { jobId: "job_del", questionId: "q_del", revisionId: "rev_del", status: "succeeded" });
+  await svc.putAnalysis(ALICE, {
+    revisionId: "rev_del",
+    questionId: "q_del",
+    output: {
+      observation: { text: "观察", evidenceIds: [] },
+      interpretation: { text: "解读", evidenceIds: [] },
+      nextAction: { text: "下一步", evidenceIds: [] },
+      revisedClaim: { text: "改写", evidenceIds: [] },
+    },
+    citations: [],
+    promptVersion: "analysis-v1",
+    provider: "mock",
+    model: "mock-model",
+    createdAt: T3,
+  });
+  await svc.appendJobEvent(ALICE, {
+    eventId: "ev_del", jobId: "job_del", revisionId: "rev_del",
+    node: "archive", status: "completed", at: T3, summary: "定稿",
+  });
+
+  await svc.deleteProject(ALICE, "p_demo");
+
+  assert.equal(await svc.getProject(ALICE, "p_demo"), null);
+  assert.equal(await svc.getQuestion(ALICE, "q_del"), null);
+  assert.equal(await svc.getRevision(ALICE, "q_del", "rev_del"), null);
+  assert.equal(await svc.getJob(ALICE, "job_del"), null);
+  assert.equal(await svc.getAnalysis(ALICE, "rev_del"), null);
+  assert.deepEqual(await svc.getJobEvents(ALICE, "job_del"), []);
+  await assert.rejects(svc.listRuns(ALICE, "p_demo"), NotFoundError);
+  await assert.rejects(svc.listQuestions(ALICE, "p_demo"), NotFoundError);
+  assert.deepEqual((await svc.listProjects(ALICE)).map((p) => p.projectId), ["p_keep"]);
+
+  // 保留项目不受影响
+  assert.equal((await svc.getQuestion(ALICE, "q_keep"))?.projectId, "p_keep");
+  assert.equal((await svc.listRuns(ALICE, "p_keep")).length, 2);
+});
+
+test("deleteProject 幂等键一并清除：删后同请求键可正常创建新版本", async () => {
+  const backend = new MemoryBackend();
+  const svc = svcOf(backend);
+  await svc.createProject(ALICE, "P", T0, "p_demo");
+  await importCsv(svc, ALICE, CSV_INITIAL, T1);
+  await svc.createQuestion(ALICE, {
+    questionId: "q_0001", projectId: "p_demo",
+    rawClaim: demoQuestion.rawClaim, confirmedClaim: demoQuestion.confirmedClaim, now: T1,
+  });
+  const pkg = await svc.verifyQuestion(ALICE, "q_0001");
+  const v1runs = await svc.listRuns(ALICE, "p_demo");
+  const v1 = revisionFrom("rev_0001", "q_0001", null, T2,
+    demoQuestion.confirmedClaim, v1runs, conclusionsFromPackage(pkg), evidenceRunIdsOf(pkg),
+    pkg.suggestions.map((s) => s.text));
+  await svc.createRevision(ALICE, { revision: v1, idempotencyKey: "req-k", expectedParentId: null, now: T2 });
+
+  await svc.deleteProject(ALICE, "p_demo");
+
+  // 重建同 ID 项目与问题后，同一幂等键不得命中旧版本
+  await svc.createProject(ALICE, "P 重建", T3, "p_demo");
+  await importCsv(svc, ALICE, CSV_INITIAL, T3);
+  await svc.createQuestion(ALICE, {
+    questionId: "q_0001", projectId: "p_demo",
+    rawClaim: demoQuestion.rawClaim, confirmedClaim: demoQuestion.confirmedClaim, now: T3,
+  });
+  const pkg2 = await svc.verifyQuestion(ALICE, "q_0001");
+  const v2 = revisionFrom("rev_0002", "q_0001", null, T4,
+    demoQuestion.confirmedClaim, await svc.listRuns(ALICE, "p_demo"),
+    conclusionsFromPackage(pkg2), evidenceRunIdsOf(pkg2), pkg2.suggestions.map((s) => s.text));
+  const created = await svc.createRevision(ALICE, {
+    revision: v2, idempotencyKey: "req-k", expectedParentId: null, now: T4,
+  });
+  assert.equal(created.created, true, "旧幂等键已随删除清除，创建新版本而不是重放");
+  assert.equal((await svc.listRevisions(ALICE, "q_0001")).length, 1);
+});
+
+test("deleteProject 不存在报 NotFound；他人项目不可删", async () => {
+  const svc = svcOf(new MemoryBackend());
+  await svc.createProject(ALICE, "A 的项目", T0, "p_a");
+  await assert.rejects(svc.deleteProject(ALICE, "p_missing"), NotFoundError);
+  await assert.rejects(svc.deleteProject(BOB, "p_a"), NotFoundError);
+  assert.equal((await svc.getProject(ALICE, "p_a"))?.name, "A 的项目", "删除失败后数据原样");
+});
