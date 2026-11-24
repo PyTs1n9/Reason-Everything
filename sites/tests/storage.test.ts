@@ -80,7 +80,7 @@ test("验收流程：新建→导入两行→V1→重新进入→追加R03→V2�
   let svc = svcOf(backend);
 
   // 1) 新建项目
-  const project = await svc.createProject(ALICE, "表里有据 · 演示", T0, "p_demo");
+  const project = await svc.createProject(ALICE, "研论书屋 · 演示", T0, "p_demo");
   assert.equal(project.projectId, "p_demo");
 
   // 2) 导入两行（预览 → 确认）

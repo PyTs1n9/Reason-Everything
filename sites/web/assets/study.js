@@ -1,4 +1,4 @@
-// 表里有据 · 研究界面（卡 09）：外框 + 项目列表 + 项目内问题列表 + 新问题/数据录入。
+// 研论书屋 · 研究界面（卡 09）：外框 + 项目列表 + 项目内问题列表 + 新问题/数据录入。
 // 纯 JS（无类型标注）；业务走正式服务动作；持久化 = IndexedDB「本机保存」。
 import { createIndexedDBBackend, LOCAL_STORAGE_LABEL } from "./gen/src/experiment/storage-indexeddb.js";
 import { createDataService } from "./gen/src/experiment/storage.js";
@@ -367,7 +367,7 @@ async function renderSidebar(route) {
   // 当前项目所在文件夹默认展开，便于定位
   if (activeProjectId) collapsedProjectIds.delete(activeProjectId);
 
-  const rootLink = h("a", { class: "side-link side-root", href: "#/", text: "📚 表里有据" });
+  const rootLink = h("a", { class: "side-link side-root", href: "#/", text: "📚 研论书屋" });
   if (route.view === "projects") rootLink.setAttribute("aria-current", "page");
   nav.append(rootLink);
 

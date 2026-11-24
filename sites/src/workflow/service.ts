@@ -586,7 +586,7 @@ export interface RequestExample {
 }
 
 export const REQUEST_EXAMPLES: RequestExample[] = [
-  { action: "createProject", example: `wf.createProject(ALICE, "表里有据 · 演示", "p_demo")` },
+  { action: "createProject", example: `wf.createProject(ALICE, "研论书屋 · 演示", "p_demo")` },
   { action: "createQuestion", example: `wf.createQuestion(ALICE, { projectId: "p_demo", rawClaim: "数据增强使准确率提高了 2 个百分点" })` },
   { action: "parseClaim", example: `wf.parseClaim("req-parse-1", rawClaim)` },
   { action: "confirmScope", example: `wf.confirmScope(ALICE, { questionId, proposal, source: "model", targetRunId: "R02", baselineRunId: "R01", scope: "both_lrs", learningRates: [0.001, 0.01] })` },
