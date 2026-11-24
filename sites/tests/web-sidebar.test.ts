@@ -139,10 +139,10 @@ test("HTML：研究库按钮常显，分隔条、羽毛与透明 PNG 槽位具�
   assert.match(html, /aria-valuemin="208"/);
   assert.match(html, /aria-valuemax="420"/);
   assert.match(html, /class="sidebar-feather-mark" aria-hidden="true"/);
-  assert.match(html, /class="sidebar-feather"[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(html, /<svg class="sidebar-feather"[\s\S]*?<\/svg>/);
   assert.match(html, /class="sidebar-tree-image" data-src="\.\/assets\/sidebar-winding-tree\.png"/);
   assert.match(html, /class="sidebar-leaf-source" data-src="\.\/assets\/sidebar-leaf\.png"/);
-  assert.match(html, /class="sidebar-feather-image" data-src="\.\/assets\/sidebar-feather\.png"/);
+  assert.doesNotMatch(html, /class="sidebar-feather-image"/);
   assert.match(html, /id="sidebarLeafLayer" aria-hidden="true"/);
 });
 
@@ -176,6 +176,7 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
   assert.match(js, /image\.src = image\.dataset\.src/);
   assert.match(js, /shell\.classList\.add\("sidebar-tree-ready"\)/);
   assert.match(js, /shell\.classList\.add\("sidebar-feather-ready"\)/);
+  assert.doesNotMatch(js, /sidebarFeatherImage|sidebarFeatherReadyCount/);
   assert.match(js, /function emitSidebarLeaves\(\)/);
   assert.match(js, /sidebarReducedMotionQuery\.matches/);
   assert.match(js, /sidebarLeafLayer\.childElementCount >= 12/);
@@ -184,6 +185,24 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
   assert.match(js, /--leaf-drift/);
   assert.match(js, /animationend/);
   assert.match(js, /emitSidebarLeaves\(\);/);
+});
+
+test("卡片羽毛：右上角改用透明 PNG，装饰不进入交互与无障碍树", () => {
+  const cardMarkup = js.slice(js.indexOf("function cardFor("), js.indexOf("async function updateGrid("));
+  assert.match(cardMarkup, /h\("img", \{/);
+  assert.match(cardMarkup, /class: "card-feather"/);
+  assert.match(cardMarkup, /src: "\.\/assets\/sidebar-feather\.png"/);
+  assert.match(cardMarkup, /alt: ""/);
+  assert.match(cardMarkup, /draggable: "false"/);
+  assert.match(cardMarkup, /"aria-hidden": "true"/);
+  assert.doesNotMatch(cardMarkup, /<svg/);
+  const feather = ruleBody(css, ".card-feather");
+  assert.match(feather, /position:\s*absolute/);
+  assert.match(feather, /top:\s*12px/);
+  assert.match(feather, /right:\s*16px/);
+  assert.match(feather, /object-fit:\s*contain/);
+  assert.match(feather, /pointer-events:\s*none/);
+  assert.doesNotMatch(css, /\.card-feather svg/);
 });
 
 test("PNG 素材：三张正式位图具备透明通道、干净边缘与右下角无水印", () => {
@@ -215,9 +234,10 @@ test("PNG 素材：三张正式位图具备透明通道、干净边缘与右下�
   }
 });
 
-test("CSS：可变栏宽、收起归零、拖动把手与羽毛不拦截交互", () => {
+test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分隔线和高亮", () => {
   assert.match(ruleBody(css, ".shell"), /--sidebar-width:\s*248px/);
   assert.match(ruleBody(css, ".shell"), /grid-template-columns:\s*var\(--sidebar-width\) minmax\(0, 1fr\)/);
+  assert.doesNotMatch(ruleBody(css, ".sidebar"), /border-right/);
   assert.match(ruleBody(sidebarCss, ".shell.sidebar-collapsed"), /grid-template-columns:\s*0 minmax\(0, 1fr\)/);
   const collapsedSidebar = ruleBody(sidebarCss, ".shell.sidebar-collapsed .sidebar");
   assert.match(collapsedSidebar, /width:\s*0/);
@@ -226,7 +246,10 @@ test("CSS：可变栏宽、收起归零、拖动把手与羽毛不拦截交互",
   const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
   assert.match(resizer, /cursor:\s*col-resize/);
   assert.match(resizer, /touch-action:\s*none/);
-  assert.match(ruleBody(sidebarCss, ".sidebar-feather"), /pointer-events:\s*none/);
+  assert.match(resizer, /outline:\s*none/);
+  assert.doesNotMatch(sidebarCss, /\.sidebar-resizer::after|\.sidebar-resizer:hover|\.sidebar-resizer:focus-visible/);
+  assert.doesNotMatch(sidebarCss, /\.sidebar-feather\s*\{|\.sidebar-feather-image/);
+  assert.match(sidebarCss, /\.sidebar-feather-mark-image,\s*\.sidebar-tree-image\s*\{[^}]*pointer-events:\s*none/);
   assert.match(ruleBody(sidebarCss, ".sidebar-feather-mark"), /color:\s*var\(--brand\)/);
   assert.match(ruleBody(css, ".nav-btn"), /display:\s*inline-flex/);
   const treeAt = sidebarCss.lastIndexOf("\n.sidebar-tree-image {");
@@ -235,15 +258,23 @@ test("CSS：可变栏宽、收起归零、拖动把手与羽毛不拦截交互",
   const treeClose = sidebarCss.indexOf("}", treeOpen);
   const treeImage = sidebarCss.slice(treeOpen + 1, treeClose);
   assert.match(ruleBody(sidebarCss, ".sidebar-tree-image"), /display:\s*none/);
-  assert.match(treeImage, /width:\s*144px/);
+  const treeWidth = Number(treeImage.match(/width:\s*(\d+)px/)?.[1]);
+  assert.equal(treeWidth, 144);
   assert.match(treeImage, /object-fit:\s*cover/);
-  assert.match(ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image"), /display:\s*block/);
+  const readyResizer = ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-resizer");
+  const hitWidth = Number(readyResizer.match(/width:\s*(\d+)px/)?.[1]);
+  assert.equal(hitWidth, 136);
+  assert.ok(treeWidth - hitWidth > 0 && treeWidth - hitWidth <= 16, "命中区应略窄于树木贴图");
+  assert.match(readyResizer, /right:\s*-28px/);
+  const readyTree = ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image");
+  assert.match(readyTree, /display:\s*block/);
+  assert.match(readyTree, /right:\s*-4px/);
   assert.match(ruleBody(sidebarCss, ".sidebar-leaf-layer"), /pointer-events:\s*none/);
   assert.match(sidebarCss, /@keyframes sidebar-leaf-fall/);
   assert.match(sidebarCss, /animation:\s*sidebar-leaf-fall 1100ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
 });
 
-test("CSS：窄屏隐藏把手与按钮文字，减少动效和透明度偏好降级", () => {
+test("CSS：窄屏隐藏把手与按钮文字，减少动效偏好降级", () => {
   const narrow = mediaAfterMarker("(max-width: 1199px)");
   assert.match(narrow, /\.sidebar-resizer\s*\{\s*display:\s*none/);
   const mobile = mediaAfterMarker("(max-width: 767px)");
@@ -253,8 +284,6 @@ test("CSS：窄屏隐藏把手与按钮文字，减少动效和透明度偏好�
   assert.match(reducedMotion, /\.nav-btn(?:,\s*\.nav-btn:active)?\s*\{\s*transform:\s*none;\s*transition:\s*none/);
   assert.match(reducedMotion, /\.sidebar-leaf-layer\s*\{\s*display:\s*none/);
   assert.match(reducedMotion, /\.sidebar-falling-leaf\s*\{\s*animation:\s*none/);
-  const reducedTransparency = mediaAfterMarker("(prefers-reduced-transparency: reduce)");
-  assert.match(reducedTransparency, /\.sidebar-feather,\s*\.sidebar-feather-image\s*\{\s*display:\s*none/);
 });
 
 test("构建：侧栏纯函数进入浏览器构建清单", () => {

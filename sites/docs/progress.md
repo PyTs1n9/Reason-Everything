@@ -296,3 +296,10 @@
 - **浏览器实测（127.0.0.1:8356）**：`document.title` 与顶栏链接均为「研论书屋」，品牌可见，页面正文不含旧名称。
 - **验收命令**：`node --test tests/brand.test.ts tests/storage.test.ts tests/workflow.test.ts` = 30/30 pass、exit 0；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。隔离交付快照 `npm test` = 222/222 pass、exit 0。当前并发工作区全量 `npm test` = 295/297 pass、exit 1；两项失败与修改前基线相同，均为 `web-ux.test.ts` 的旧模型提示文案与旧根路径条件断言。
 - **未测/受限**：未发布线上站点；真实模型与云存储状态不变；本地 `.workbuddy` 历史探针不属于产品源码，未修改。**本次没做**：未修既有失败、未改其他卡片成果、未纳入并发暂存内容。**交付状态**：已按用户确认将本地卡 27/R4 变基到远端 R2；重放后全量 237/237 通过，双推结果在回执中报告。
+
+## 卡 R8 · 羽毛迁移与树木拖动命中区（2026-11-25）
+
+- **交付**：项目卡片右上角改为透明 `sidebar-feather.png`，移除卡片羽毛 SVG；删除侧栏右下羽毛及其 SVG/PNG 回退，保留「研究库」旁的小羽毛标记。去掉侧栏右边框、拖动条伪元素线、焦点框与悬停高亮；树木贴图宽 144px，拖动命中区宽 136px，水平方向各内缩 4px。Pointer Events、键盘、宽度持久化、落叶、桌面收起与窄屏抽屉逻辑不变。
+- **离线测试**：`tests/web-sidebar.test.ts` 在隔离快照覆盖卡片 PNG 无障碍属性、侧栏羽毛移除、无分隔线/高亮、136/144px 命中区与透明素材，`node --test tests/web-sidebar.test.ts` = **12/12 pass、exit 0**；当前混合工作区与 `tests/web-home-glass.test.ts` 联合 = **16/16 pass、exit 0**。隔离快照 `npm test` = **240/240 pass、exit 0**；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
+- **浏览器实测**：当前混合工作区 1440×900 同源 iframe 中卡片羽毛为已加载的 768×1024 PNG、无 SVG；树木框 144×876px、命中区 136×844px，中心命中把手，侧栏导航仍可点击；脚本 PointerEvent 拖动 248→308px 并生成 2 片落叶，Home/ArrowRight/End 分别到 208/224/420px。隔离快照 127.0.0.1:8373 复测卡片羽毛与操作区不重叠（桌面约 3px、手机约 22px 间距），390×844 下羽毛 60px、按钮 44×44px、抽屉 260px、Escape 回焦、横向溢出 0；两轮控制台均无 error/warn，临时演示项目、iframe、页面与服务已清理。
+- **未测/受限**：in-app 浏览器视口为 0×0，截图仍返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`；以真实 DOM、计算样式、坐标与脚本事件留证，未声称可见截图或物理鼠标验收。当前混合工作区 `npm test` = **297/299 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧提示文案与旧根路径条件断言，未越界修改。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未改业务 schema、模型服务、依赖、站点访问范围，未纳入其他未提交卡片成果。

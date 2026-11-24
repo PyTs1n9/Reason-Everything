@@ -213,7 +213,6 @@ body {
   position: relative;
   min-width: 0;
   background: var(--surface);
-  border-right: 1px solid var(--line);
   padding: 24px 16px;
 }
 
@@ -1564,10 +1563,40 @@ h1 .project-title-input[aria-invalid="true"] {
   flex-direction: column;
   gap: 8px;
   padding: 16px;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.card-feather {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 0;
+  display: block;
+  width: 74px;
+  height: 74px;
+  object-fit: contain;
+  opacity: 0.78;
+  filter: drop-shadow(0 6px 10px var(--shadow-soft));
+  transform: rotate(-8deg);
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 767px) {
+  .card-feather {
+    top: 8px;
+    right: 8px;
+    width: 60px;
+    height: 60px;
+  }
+
+  .card-top {
+    padding-right: 64px;
+  }
 }
 
 .project-card:hover,
@@ -1582,6 +1611,7 @@ h1 .project-title-input[aria-invalid="true"] {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-right: 82px;
 }
 
 .card-tag {
@@ -1665,6 +1695,7 @@ h1 .project-title-input[aria-invalid="true"] {
 
 .card-name {
   position: static;
+  padding-right: 42px;
   color: inherit;
   text-decoration: none;
   font-size: 15px;
@@ -2986,19 +3017,6 @@ h1 .project-title-input[aria-invalid="true"] {
   z-index: 1;
 }
 
-.sidebar-feather {
-  position: absolute;
-  right: -8px;
-  bottom: 22px;
-  z-index: 0;
-  width: 128px;
-  height: 168px;
-  color: var(--brand);
-  opacity: 0.09;
-  transform: rotate(-10deg);
-  pointer-events: none;
-}
-
 .sidebar-resizer {
   position: absolute;
   top: 0;
@@ -3010,23 +3028,12 @@ h1 .project-title-input[aria-invalid="true"] {
   justify-content: center;
   width: 12px;
   padding: 0;
-  color: var(--line-strong, var(--line));
   cursor: col-resize;
   touch-action: none;
-  outline-offset: -2px;
-}
-
-.sidebar-resizer::after {
-  content: "";
-  width: 5px;
-  height: 36px;
-  border-left: 1px solid currentColor;
-  border-right: 1px solid currentColor;
-  border-radius: 999px;
+  outline: none;
 }
 
 .sidebar-feather-mark-image,
-.sidebar-feather-image,
 .sidebar-tree-image {
   display: none;
   pointer-events: none;
@@ -3039,24 +3046,11 @@ h1 .project-title-input[aria-invalid="true"] {
   object-fit: contain;
 }
 
-.sidebar-feather-image {
-  position: absolute;
-  right: -8px;
-  bottom: 22px;
-  width: 128px;
-  height: 168px;
-  object-fit: contain;
-  opacity: 0.2;
-  transform: rotate(-10deg);
-}
-
-.shell.sidebar-feather-ready .sidebar-feather-mark svg,
-.shell.sidebar-feather-ready .sidebar-feather {
+.shell.sidebar-feather-ready .sidebar-feather-mark svg {
   display: none;
 }
 
-.shell.sidebar-feather-ready .sidebar-feather-mark-image,
-.shell.sidebar-feather-ready .sidebar-feather-image {
+.shell.sidebar-feather-ready .sidebar-feather-mark-image {
   display: block;
 }
 
@@ -3074,21 +3068,13 @@ h1 .project-title-input[aria-invalid="true"] {
 }
 
 .shell.sidebar-tree-ready .sidebar-resizer {
-  right: -12px;
-  width: 24px;
-}
-
-.shell.sidebar-tree-ready .sidebar-resizer::after {
-  display: none;
+  right: -28px;
+  width: 136px;
 }
 
 .shell.sidebar-tree-ready .sidebar-tree-image {
   display: block;
-}
-
-.sidebar-resizer:hover .sidebar-tree-image,
-.sidebar-resizer:focus-visible .sidebar-tree-image {
-  opacity: 1;
+  right: -4px;
 }
 
 .sidebar-leaf-layer {
@@ -3143,7 +3129,6 @@ body.sidebar-resizing * {
   padding-inline: 0;
   visibility: hidden;
   overflow: hidden;
-  border-right-width: 0;
 }
 
 .shell.sidebar-collapsed .sidebar-resizer {
@@ -3166,16 +3151,6 @@ body.sidebar-resizing * {
   .nav-btn-label {
     display: none;
   }
-
-  .sidebar-feather {
-    right: 2px;
-    opacity: 0.07;
-  }
-
-  .sidebar-feather-image {
-    right: 2px;
-    opacity: 0.14;
-  }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -3183,11 +3158,6 @@ body.sidebar-resizing * {
     color: var(--brand);
     background: var(--brand-soft, var(--bg));
     border-color: var(--brand);
-  }
-
-  .sidebar-resizer:hover,
-  .sidebar-resizer:focus-visible {
-    color: var(--brand);
   }
 }
 
@@ -3204,13 +3174,6 @@ body.sidebar-resizing * {
 
   .sidebar-falling-leaf {
     animation: none;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .sidebar-feather,
-  .sidebar-feather-image {
-    display: none;
   }
 }
 

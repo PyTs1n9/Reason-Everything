@@ -633,6 +633,13 @@ async function renderProjects() {
       dataset: { projectId: project.projectId },
       style: `--card-i:${index}`,
     },
+      h("img", {
+        class: "card-feather",
+        src: "./assets/sidebar-feather.png",
+        alt: "",
+        draggable: "false",
+        "aria-hidden": "true",
+      }),
       h("div", { class: "card-top" },
         h("span", { class: `card-tag ${typeColorClass(tag)}`, text: tag }),
         h("div", { class: "card-actions" }, pinBtn, renameBtn, deleteBtn),
@@ -4140,11 +4147,9 @@ let resizeStartWidth = SIDEBAR_DEFAULT_WIDTH;
 const sidebarTreeImage = sidebarResizer.querySelector(".sidebar-tree-image");
 const sidebarLeafSource = sidebarResizer.querySelector(".sidebar-leaf-source");
 const sidebarFeatherMarkImage = sidebarResizer.closest(".sidebar").querySelector(".sidebar-feather-mark-image");
-const sidebarFeatherImage = sidebarResizer.closest(".sidebar").querySelector(".sidebar-feather-image");
 const sidebarLeafLayer = document.getElementById("sidebarLeafLayer");
 const sidebarReducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 let sidebarLeafReady = false;
-let sidebarFeatherReadyCount = 0;
 let lastSidebarLeafAt = 0;
 
 function loadSidebarArtwork(image, onLoad) {
@@ -4156,8 +4161,7 @@ function loadSidebarArtwork(image, onLoad) {
 }
 
 function markSidebarFeatherReady() {
-  sidebarFeatherReadyCount += 1;
-  if (sidebarFeatherReadyCount === 2) shell.classList.add("sidebar-feather-ready");
+  shell.classList.add("sidebar-feather-ready");
 }
 
 function emitSidebarLeaves() {
@@ -4305,7 +4309,6 @@ loadSidebarArtwork(sidebarLeafSource, () => {
   sidebarLeafReady = true;
 });
 loadSidebarArtwork(sidebarFeatherMarkImage, markSidebarFeatherReady);
-loadSidebarArtwork(sidebarFeatherImage, markSidebarFeatherReady);
 sidebarReducedMotionQuery.addEventListener("change", (event) => {
   if (event.matches) sidebarLeafLayer.replaceChildren();
 });
