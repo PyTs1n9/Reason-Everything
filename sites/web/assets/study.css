@@ -62,7 +62,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 30;
-  height: 64px;
+  height: 56px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   display: flex;
@@ -85,6 +85,36 @@ body {
   color: var(--ink);
   text-decoration: none;
   white-space: nowrap;
+}
+
+.topbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.topbar-back:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--line);
+}
+
+.topbar-back[hidden] {
+  display: none;
+}
+
+.topbar-back-short {
+  display: none;
 }
 
 .save-mode-wrap {
@@ -175,7 +205,7 @@ body {
   --sidebar-width: 248px;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  min-height: calc(100vh - 64px);
+  min-height: calc(100vh - 56px);
 }
 
 .sidebar {
@@ -305,7 +335,7 @@ p {
   负外边距抵消 .content 间距，保持与标题原 6px 间距不变。 */
 .back-link--follow {
   position: sticky;
-  top: 72px;
+  top: 64px;
   z-index: 20;
   align-self: flex-start;
   margin-bottom: -18px;
@@ -1200,7 +1230,7 @@ select:focus-visible,
   .sidebar {
     display: none;
     position: fixed;
-    top: 64px;
+    top: 56px;
     left: 0;
     bottom: 0;
     width: 260px;
@@ -1247,6 +1277,23 @@ select:focus-visible,
   .brand {
     font-size: 22px;
     line-height: 32px;
+  }
+
+  .topbar-left {
+    gap: 8px;
+  }
+
+  .topbar-back {
+    min-height: 44px;
+    padding: 0 4px;
+  }
+
+  .topbar-back-full {
+    display: none;
+  }
+
+  .topbar-back-short {
+    display: inline;
   }
 
   .btn,
@@ -3112,5 +3159,20 @@ body.sidebar-resizing * {
   .sidebar-feather,
   .sidebar-feather-image {
     display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .topbar-left {
+    gap: 6px;
+  }
+
+  .brand {
+    font-size: 20px;
+  }
+
+  .topbar-back {
+    gap: 4px;
+    padding: 0 2px;
   }
 }

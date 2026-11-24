@@ -59,6 +59,7 @@ const wf = createWorkflowService(wfDeps);
 globalThis.__agentflow = { wfDeps };
 
 const main = document.getElementById("main");
+const topbarBack = document.getElementById("topbarBack");
 const shell = document.querySelector(".shell");
 const sidebar = document.getElementById("sidebar");
 const navBtn = document.getElementById("navBtn");
@@ -323,6 +324,7 @@ let currentProjectId = null;
 
 async function render() {
   const route = parseRoute();
+  topbarBack.hidden = route.view !== "project";
   closeNav();
   closeSaveModePop();
   clear(main);
@@ -1868,7 +1870,6 @@ async function renderProject(projectId, page) {
   if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId || parseRoute().page !== page) return;
 
   const nameHost = h("span", { id: "projectTitle", text: project.name });
-  const backLink = h("a", { class: "back-link back-link--follow", href: "#/", text: "← 返回项目列表" });
   const head = h("div", { class: "page-head" },
     h("div", { class: "field", style: "gap:6px" },
       h("h1", {}, nameHost),
@@ -1892,7 +1893,7 @@ async function renderProject(projectId, page) {
   );
 
   const listHost = h("div", { id: "questionListHost" });
-  main.append(backLink, head, renameRow, listHost);
+  main.append(head, renameRow, listHost);
   if (paper) listHost.before(renderPaperStudy(paper, page, paperFile), h("h2", { text: "已创建的研究问题" }));
   else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
   if (page > 0 && paper) document.getElementById("paperPage").focus();

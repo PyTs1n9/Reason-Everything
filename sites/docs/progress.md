@@ -273,3 +273,11 @@
 - **浏览器实测（隔离快照，同源 iframe，临时测试素材与服务均已移除）**：1440×900 加载 PNG 后树木/羽毛就绪，树木框 144×868px、`object-fit: cover`、把手宽 24px，拖动宽度 248→288→308px，受控序列生成 6 片落叶并自然清理，收起后网格 0/1440px；390×844 按钮 44×44px、抽屉宽 260px、top 56px、横向溢出 0。主工作区缺失 PNG 时保留 SVG 回退、树木隐藏、网格 248/1192px；主工作区临时 PNG 验证拖动落叶与移动端布局，手动派发 `animationend` 验证清理。in-app 浏览器视口仍不可见，未取得可见截图。
 - **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）、`node --check web/assets/study.js`、`git diff --check` 均 exit 0（仅 CRLF 转换提示）。隔离快照 `npm test` = **230/230 pass、exit 0**；主工作区含并发未提交测试的 `npm test` = **292/295 pass、exit 1**，3 个失败均非本卡改动：`web-follow.test.ts` 缺少 `.topbar-back-full`，以及 `web-ux.test.ts` 旧模型提示文案和根路径旧条件。
 - **未测/受限**：`ImageGen` 返回 HTTP 403，未生成最终 PNG，也未用 SVG 或网络图片冒充；最终树木/落叶/羽毛的视觉验收待用户提供透明 PNG。拖动使用脚本 PointerEvent 并临时补齐合成事件的 pointer capture，不冒充物理鼠标证明。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未修非本卡失败、未改业务 schema、模型服务、其他页面、依赖、站点访问范围或其他卡冻结契约，未纳入并发未提交改动。
+
+## 卡 R3 · 顶栏高度统一与项目返回入口前移（2026-11-25）
+
+- **交付**：全站顶栏统一为 56px，文章阅读路由不再形成不同的页头高度；项目页「← 返回项目列表」从正文独立行移到常驻顶栏空白区域，项目标题与文献内容整体上移，新建研究问题页原有跟随链接保留。顶栏返回入口仅在项目路由显示，≤767px 缩短为「← 返回」并保持 44px 触控高度，≤360px 压缩间距避免与「本机保存」重叠。
+- **离线测试**：`tests/web-follow.test.ts` 增加常驻顶栏接线、隐藏态、主内容首子项、全站顶栏高度与窄屏缩写断言；主工作区 `node --test tests/web-follow.test.ts tests/web-reader-layout.test.ts` = **13/13 pass、exit 0**；最新远端隔离快照 `node --test tests/web-follow.test.ts` = **5/5 pass、exit 0**，完整 `npm test` = **231/231 pass、exit 0**。
+- **浏览器实测（隔离快照 127.0.0.1:8321，真实 IndexedDB 项目页 + 同源静态克隆 iframe）**：1440/1024/768/390/360/320px 顶栏均为 56px，项目正文首个子项为项目标题节点，无独立返回行、无横向溢出；320px 返回入口与保存状态间距 25px。真实路由点击返回可回首页且入口隐藏，重新进入项目恢复显示；新建问题页顶栏同为 56px，跟随链接吸顶位为 64px。
+- **验收命令**：隔离快照上述定向测试、`npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js` 与 `git diff --cached origin/main --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。当前并发工作区完整测试仍有 `web-ux.test.ts` 的旧模型提示文案与旧 `if (path === "/")` 两项既有失败，不属于本卡范围。
+- **未测/受限**：in-app 浏览器视口 0×0，原生截图返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，以真实 DOM、计算样式、坐标与路由事件留证；真实模型与云存储未接通；`tsc` 未跑（依赖冻结）。**本次没做**：未修上述既有失败、未改业务 schema、依赖、模型服务、发布或站点访问范围，未纳入其他未提交卡片成果。
