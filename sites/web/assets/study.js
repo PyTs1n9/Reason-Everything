@@ -29,6 +29,7 @@ import {
   buildSaveModeInfo,
 } from "./gen/src/web/model.js";
 import { createLiteratureClient } from "./gen/src/web/literature.js";
+import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -212,6 +213,13 @@ function savePaperImport(projectId, record) {
   }
 }
 
+function readLegacyPaperImport(projectId) {
+  const raw = localStorage.getItem(PAPER_IMPORTS_KEY);
+  if (!raw) return null;
+  const entry = JSON.parse(raw)?.[projectId];
+  return entry?.source === "pdf" && entry.sha256 ? entry : null;
+}
+
 /** 删除项目时清理本机 UI 元数据（置顶/类型标签/导入溯源），业务存储契约不动。 */
 function removeProjectLocalMeta(projectId) {
   const pinned = loadPinnedIds();
@@ -287,7 +295,7 @@ function attachModalBehavior(overlay, modal, close) {
 function parseRoute() {
   const hash = location.hash || "#/";
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  if (parts[0] === "project" && parts[1]) return { view: "project", projectId: parts[1] };
+  if (parts[0] === "project" && parts[1]) return { view: "project", projectId: parts[1], page: Number(parts[2]) || 0 };
   if (parts[0] === "new" && parts[1]) return { view: "newQuestion", projectId: parts[1] };
   if (parts[0] === "question" && parts[1]) return { view: "question", questionId: parts[1] };
   return { view: "projects" };
@@ -304,7 +312,7 @@ async function render() {
     if (route.view === "projects") await renderProjects();
     else if (route.view === "project") {
       currentProjectId = route.projectId;
-      await renderProject(route.projectId);
+      await renderProject(route.projectId, route.page);
     } else if (route.view === "newQuestion") {
       currentProjectId = route.projectId;
       await renderNewQuestion(route.projectId);
@@ -777,6 +785,9 @@ function openCreateProjectModal(trigger, options = {}) {
 
   createProjectModalState = { trigger, overlay, modal };
 
+  const autoGenerate = options.paper ? paperGenerationChoice() : null;
+  if (autoGenerate) modal.insertBefore(autoGenerate.label, error);
+
   confirmBtn.addEventListener("click", async () => {
     const name = nameInput.value.trim();
     if (!name) {
@@ -790,11 +801,14 @@ function openCreateProjectModal(trigger, options = {}) {
     error.hidden = true;
     confirmBtn.disabled = true;
     try {
-      const project = await wf.createProject(ACTOR, name);
+      const project = options.paper
+        ? await data.importPaper(ACTOR, { name, paper: options.paper, now: new Date().toISOString() })
+        : await wf.createProject(ACTOR, name);
       saveProjectType(project.projectId, normalizeProjectType(typeSelect.value));
       if (options.paperMeta) savePaperImport(project.projectId, options.paperMeta);
       closeCreateProjectModal(false);
       location.hash = `#/project/${project.projectId}`;
+      if (autoGenerate?.input.checked) void startPaperGeneration(project.projectId, options.paper);
     } catch (createError) {
       confirmBtn.disabled = false;
       error.hidden = false;
@@ -845,61 +859,54 @@ function closeCreateProjectModal(restoreFocus = true) {
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
 }
 
-// ---------- 导入 PDF（vendored pdf.js 本地解析；首页文本仅展示不持久化） ----------
+// ---------- 导入 PDF ----------
 
-async function importPdfFile(file, trigger) {
+async function importPdfFile(file, trigger, restore = null) {
   if (!file) return;
   if (!file.name.toLowerCase().endsWith(".pdf")) {
     toast("只支持 PDF 文件", "bad");
     return;
   }
+  if (trigger) trigger.disabled = true;
   toast(`正在本地解析：${file.name}`);
   try {
     const buffer = await file.arrayBuffer();
     const sha256 = await sha256hex(buffer.slice(0));
+    if (restore && sha256 !== restore.meta.sha256) throw new Error("请选择该项目当时导入的原始 PDF");
     const pdfjsLib = await loadPdfLib();
-    const pdf = await pdfjsLib.getDocument({
+    const task = pdfjsLib.getDocument({
       data: buffer,
       cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
       cMapPacked: true,
       standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
-    }).promise;
-
+    });
+    let pages;
     let metaTitle = "";
     try {
+      const pdf = await task.promise;
       const meta = await pdf.getMetadata();
-      metaTitle = String((meta && meta.info && meta.info.Title) || "").trim();
-    } catch {
-      // 元数据缺失不阻断摄取
-    }
-
-    const pages = [];
-    for (let number = 1; number <= pdf.numPages; number++) {
-      const page = await pdf.getPage(number);
-      const content = await page.getTextContent();
-      pages.push(
-        content.items
-          .map((item) => (item.str ?? "") + (item.hasEOL ? "\n" : " "))
-          .join("")
-          .replace(/[ \t]{2,}/g, " ")
-          .trim(),
-      );
+      metaTitle = String(meta?.info?.Title ?? "").trim();
+      pages = await extractPaperPages(pdf);
+    } finally {
+      await task.destroy();
     }
     const textChars = pages.reduce((sum, text) => sum + Array.from(text).length, 0);
     if (!textChars) {
       toast("没有文字层：扫描件需要先 OCR", "bad");
       return;
     }
-    const title = extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
-    openImportResultModal({ file, pages, textChars, title, sha256, trigger });
+    const title = restore?.meta.title || extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
+    openImportResultModal({ file, pages, textChars, title, sha256, trigger, restore });
   } catch (error) {
     toast(`解析失败：${error && error.message ? error.message : String(error)}`, "bad");
+  } finally {
+    if (trigger) trigger.disabled = false;
   }
 }
 
 let importModalState = null;
 
-function openImportResultModal({ file, pages, textChars, title, sha256, trigger }) {
+function openImportResultModal({ file, pages, textChars, title, sha256, trigger, restore }) {
   closeImportResultModal(false);
   const overlay = h("div", { class: "modal-overlay", id: "importModalOverlay" });
   const modal = h("div", {
@@ -911,7 +918,7 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger 
     tabindex: "-1",
   });
 
-  const titleInput = h("input", { type: "text", id: "importPaperTitle", value: title, autocomplete: "off" });
+  const titleInput = h("input", { type: "text", id: "importPaperTitle", value: title, maxlength: 500, autocomplete: "off" });
   const preview = h("p", {
     class: "import-preview",
     text: (pages[0] ?? "").slice(0, 600) || "（首页无文本）",
@@ -930,21 +937,31 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger 
     }, 2000);
   });
 
-  const useBtn = h("button", { class: "btn btn-primary", type: "button", id: "importUseTitle", text: "以题名新建项目" });
-  useBtn.addEventListener("click", () => {
+  const autoGenerate = restore ? paperGenerationChoice() : null;
+  const error = h("p", { class: "field-error", role: "alert", hidden: true });
+  const useBtn = h("button", {
+    class: "btn btn-primary", type: "button", id: "importUseTitle", text: restore ? "补录到当前项目" : "用 PDF 新建项目",
+  });
+  useBtn.addEventListener("click", async () => {
     const nextName = titleInput.value.trim() || file.name.replace(/\.pdf$/i, "");
+    const paper = { filename: file.name, pages, sha256, title: nextName };
+    if (restore) {
+      useBtn.disabled = true;
+      error.hidden = true;
+      try {
+        await data.importPaper(ACTOR, { name: nextName, paper, now: new Date().toISOString(), projectId: restore.projectId });
+        closeImportResultModal(false);
+        if (autoGenerate.input.checked) void startPaperGeneration(restore.projectId, paper);
+        if (parseRoute().projectId === restore.projectId) await render();
+      } catch (saveError) {
+        error.hidden = false;
+        error.textContent = saveError.message;
+        useBtn.disabled = false;
+      }
+      return;
+    }
     closeImportResultModal(false);
-    openCreateProjectModal(trigger, {
-      prefillName: nextName,
-      paperMeta: {
-        source: "pdf",
-        filename: file.name,
-        pages: pages.length,
-        textChars,
-        sha256,
-        title: nextName,
-      },
-    });
+    openCreateProjectModal(trigger, { prefillName: nextName, paper });
   });
   const closeBtn = h("button", { class: "btn", type: "button", id: "importClose", text: "关闭" });
   closeBtn.addEventListener("click", () => closeImportResultModal());
@@ -962,13 +979,15 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger 
       h("dd", { class: "mono", text: shortId(sha256) }),
     ),
     h("div", { class: "field" },
-      h("label", { for: "importPaperTitle", text: "议题名（可修改）" }),
+      h("label", { for: "importPaperTitle", text: "文献题名" }),
       titleInput,
     ),
     h("div", { class: "field" },
-      h("span", { class: "aux", text: "首页文本预览（仅展示便于写主张，不持久化保存）" }),
+      h("span", { class: "aux", text: "首页预览 · 项目会保存各页的可提取文字" }),
       preview,
     ),
+    autoGenerate?.label,
+    error,
     h("div", { class: "modal-actions" }, copyBtn, useBtn, closeBtn),
   );
 
@@ -1281,9 +1300,165 @@ window.addEventListener("keydown", (event) => {
 
 // ---------- 视图 2：项目详情 ----------
 
-async function renderProject(projectId) {
+function paperGenerationChoice() {
+  const input = h("input", { type: "checkbox", checked: true });
+  return { input, label: h("label", { class: "paper-opt-in" }, input, "自动生成研究问题（逐批将论文文字发送给模型服务）") };
+}
+
+const paperJobs = new Map();
+
+async function requestPaperModel(input) {
+  const response = await fetch(PAPER_MODEL_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(70_000),
+  });
+  if (response.status === 404 || response.status === 405 || !response.headers.get("content-type")?.includes("application/json")) {
+    throw new Error("站点的论文模型接口未接通，全文已保存在本机");
+  }
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `论文模型请求失败（HTTP ${response.status}）`);
+  if (typeof result.text !== "string" || typeof result.model !== "string") throw new Error("论文模型返回格式无效");
+  return result;
+}
+
+async function startPaperGeneration(projectId, paper) {
+  if (paperJobs.get(projectId)?.running) return;
+  const job = { running: true, text: "正在准备论文文字…" };
+  paperJobs.set(projectId, job);
+  const onProject = () => parseRoute().view === "project" && parseRoute().projectId === projectId;
+  try {
+    const generate = async () => {
+      if ((await data.getPaperStudy(ACTOR, projectId))?.generation?.candidates.length) return;
+      const generated = await generatePaperCandidates(paper, requestPaperModel, (batch) => {
+        job.text = `模型正在阅读第 ${batch} 批论文文字…`;
+        const status = document.getElementById("paperGenerationStatus");
+        if (onProject() && status) status.textContent = job.text;
+      });
+      await data.savePaperCandidates(ACTOR, projectId, generated);
+    };
+    if (navigator.locks) await navigator.locks.request(`paper-model-${projectId}`, generate);
+    else await generate();
+    paperJobs.delete(projectId);
+  } catch (error) {
+    paperJobs.set(projectId, { running: false, text: error.message });
+  }
+  if (onProject()) await render();
+}
+
+function renderPaperEvidence(paper, candidate) {
+  const evidence = h("ul", { class: "paper-citations" });
+  for (const { page, quote } of candidate.citations) {
+    evidence.append(h("li", {},
+      h("a", { href: `#/project/${paper.projectId}/${page}`, text: `PDF 第 ${page} 页` }),
+      h("blockquote", { text: quote }),
+    ));
+  }
+  return [
+    h("dl", { class: "import-facts" },
+      h("dt", { text: "待检验主张" }), h("dd", { text: candidate.claim }),
+      h("dt", { text: "研究价值" }), h("dd", { text: candidate.rationale }),
+      h("dt", { text: "验证方法" }), h("dd", { text: candidate.verification }),
+    ),
+    evidence,
+  ];
+}
+
+function renderPaperStudy(paper, initialPage) {
+  const pagePicker = h("select", { "aria-label": "PDF 页码", id: "paperPage" },
+    paper.pages.map((text, index) => h("option", { value: index + 1, text: `第 ${index + 1} 页${text ? "" : " · 无可读文字"}` })),
+  );
+  const pageText = h("div", { class: "import-preview paper-page-text", tabindex: "0", "aria-label": "当前页正文" });
+  const job = paperJobs.get(paper.projectId);
+  const generation = paper.generation;
+  const candidates = h("section", { class: "panel paper-candidates", "aria-labelledby": "paperCandidatesTitle" },
+    h("h2", { id: "paperCandidatesTitle", text: "候选研究问题" }),
+  );
+  const body = h("div", { class: "paper-study" },
+    h("section", { class: "panel", "aria-labelledby": "paperStudyTitle" },
+      h("h2", { id: "paperStudyTitle", text: "项目文献" }),
+      h("h3", { text: paper.title }),
+      h("p", { class: "aux", text: `${paper.filename} · ${paper.pages.filter(Boolean).length}/${paper.pages.length} 页有可提取文字` }),
+      h("div", { class: "field", id: "paperReader" }, h("label", { for: "paperPage", text: "查看正文" }), pagePicker, pageText),
+    ),
+    candidates,
+  );
+  const showPage = () => {
+    pageText.textContent = paper.pages[Number(pagePicker.value) - 1] || "该页没有提取到可读文字";
+    pageText.scrollTop = 0;
+  };
+  pagePicker.value = String(paper.pages[initialPage - 1] !== undefined ? initialPage : 1);
+  pagePicker.addEventListener("change", showPage);
+  showPage();
+
+  if (!generation?.candidates.length) {
+    const message = job?.text ?? (generation ? "模型未找到有可核对证据的研究问题，可重新生成。" : "可将论文文字发送给模型服务，生成带出处的问题草稿。");
+    const status = h("p", { id: "paperGenerationStatus", role: "status", class: job && !job.running ? "field-error" : "aux", text: message });
+    const generate = h("button", { class: "btn btn-primary", type: "button", disabled: job?.running, text: job || generation ? "重新生成" : "生成研究问题" });
+    generate.addEventListener("click", () => {
+      generate.disabled = true;
+      status.textContent = "正在准备论文文字…";
+      void startPaperGeneration(paper.projectId, paper);
+    });
+    candidates.append(status, generate);
+  } else {
+    candidates.append(h("p", { class: "aux", text: `模型 ${generation.model} · 核对页码和原文后，可编辑并确认问题。` }));
+    for (const candidate of generation.candidates) {
+      const card = h("article", { class: "paper-candidate" }, h("h3", { text: candidate.question }), renderPaperEvidence(paper, candidate));
+      if (candidate.questionId) {
+        card.append(h("a", { class: "name-link", href: `#/question/${candidate.questionId}`, text: "打开已确认的问题" }));
+      } else {
+        const input = h("textarea", { maxlength: 300, rows: 2, id: `paper-question-${candidate.id}`, required: true });
+        input.value = candidate.question;
+        const confirm = h("button", { class: "btn btn-primary", type: "submit", text: "确认并创建问题" });
+        const status = h("p", { class: "field-error", role: "status" });
+        const form = h("form", { class: "field" }, h("label", { for: input.id, text: "研究问题（可修改）" }), input,
+          h("div", { class: "empty-actions" }, confirm), status);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          confirm.disabled = true;
+          status.textContent = "";
+          try {
+            const question = await data.acceptPaperCandidate(ACTOR, {
+              projectId: paper.projectId, candidateId: candidate.id, question: input.value, now: new Date().toISOString(),
+            });
+            if (form.isConnected) location.hash = `#/question/${question.questionId}`;
+          } catch (error) {
+            status.textContent = error.message;
+            confirm.disabled = false;
+          }
+        });
+        card.append(form);
+      }
+      candidates.append(card);
+    }
+  }
+  return body;
+}
+
+function renderLegacyPaper(projectId, meta) {
+  const input = h("input", { type: "file", accept: "application/pdf,.pdf", hidden: true });
+  const upload = h("button", { class: "btn", type: "button", text: "补传原 PDF" });
+  upload.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    input.value = "";
+    if (file) void importPdfFile(file, upload, { projectId, meta });
+  });
+  return h("section", { class: "panel" }, h("h2", { text: "项目文献" }),
+    h("p", { class: "aux", text: `此项目只保存了 ${meta.filename} 的导入信息。补传原文件后可查看逐页正文和生成研究问题。` }), upload, input);
+}
+
+let projectRenderSeq = 0;
+
+async function renderProject(projectId, page) {
+  const seq = ++projectRenderSeq;
   const project = await data.getProject(ACTOR, projectId);
   if (!project) throw new Error(`项目不存在: ${projectId}`);
+  const paper = await data.getPaperStudy(ACTOR, projectId);
+  const legacy = paper ? null : readLegacyPaperImport(projectId);
+  if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId || parseRoute().page !== page) return;
 
   const nameHost = h("span", { id: "projectTitle", text: project.name });
   const backLink = h("a", { class: "back-link back-link--follow", href: "#/", text: "← 返回项目列表" });
@@ -1311,6 +1486,9 @@ async function renderProject(projectId) {
 
   const listHost = h("div", { id: "questionListHost" });
   main.append(backLink, head, renameRow, listHost);
+  if (paper) listHost.before(renderPaperStudy(paper, page), h("h2", { text: "已创建的研究问题" }));
+  else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
+  if (page > 0 && paper) document.getElementById("paperPage").focus();
 
   document.getElementById("renameProjectBtn").addEventListener("click", () => {
     renameRow.hidden = false;
@@ -1350,10 +1528,15 @@ async function renderProject(projectId) {
   await updateQuestionList(projectId);
 
   async function updateQuestionList(targetId) {
-    const host = document.getElementById("questionListHost");
-    clear(host);
+    const host = listHost;
     const questions = await data.listQuestions(ACTOR, targetId);
+    if (!host.isConnected) return;
+    clear(host);
     if (questions.length === 0) {
+      if (paper) {
+        host.append(h("p", { class: "aux", text: "确认后的研究问题将显示在这里。" }));
+        return;
+      }
       host.append(
         h("div", { class: "empty" },
           h("p", { text: "该项目还没有研究问题" }),
@@ -1373,7 +1556,7 @@ async function renderProject(projectId) {
       ),
       h("thead", {},
         h("tr", {},
-          h("th", { scope: "col", text: "原句" }),
+          h("th", { scope: "col", text: paper ? "研究问题" : "原句" }),
           h("th", { scope: "col", text: "当前状态" }),
           h("th", { scope: "col", text: "最后版本" }),
         ),
@@ -1381,6 +1564,7 @@ async function renderProject(projectId) {
     );
     const tbody = h("tbody");
     for (const question of questions) {
+      const fromPaper = paper?.generation?.candidates.some((candidate) => candidate.questionId === question.questionId);
       const openButton = h("button", {
         class: "name-link",
         type: "button",
@@ -1393,7 +1577,7 @@ async function renderProject(projectId) {
       tbody.append(
         h("tr", { dataset: { questionId: question.questionId } },
           h("td", { class: "primary-cell" }, openButton),
-          h("td", { "data-label": "状态" }, badge(question.status)),
+          h("td", { "data-label": "状态" }, fromPaper ? "待研究" : badge(question.status)),
           h("td", {
             "data-label": "最后版本",
             text: question.currentRevisionId ? shortId(question.currentRevisionId) : "—",
@@ -2066,6 +2250,22 @@ async function renderQuestion(questionId) {
   if (seq !== renderSeq) return;
   if (!question) throw new Error(`问题不存在: ${questionId}`);
   const project = await data.getProject(ACTOR, question.projectId);
+  const paper = await data.getPaperStudy(ACTOR, question.projectId);
+  const candidate = paper?.generation?.candidates.find((item) => item.questionId === questionId);
+  if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
+  if (candidate) {
+    closeDrawer(false);
+    main.append(
+      h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
+      h("h1", { class: "q-claim", text: question.rawClaim }),
+      h("section", { class: "panel paper-candidate" },
+        h("h2", { text: "研究线索与文献出处" }),
+        h("p", { class: "aux", text: `${paper.title} · PDF 物理页码` }),
+        renderPaperEvidence(paper, candidate),
+      ),
+    );
+    return;
+  }
 
   if (qView.questionId !== questionId) {
     closeDrawer(false);

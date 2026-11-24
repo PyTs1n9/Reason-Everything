@@ -32,6 +32,7 @@ import type { AnalysisModelOutput } from "../agent/adapter.ts";
 import { validateRevision } from "./revision.ts";
 import { buildEvidencePackage, type EvidencePackage } from "./evidence.ts";
 import { runContentKey } from "./import.ts";
+import type { PaperCandidate, PaperSource, PaperStudy } from "../web/paper-study.ts";
 
 export interface Actor {
   /** 服务端验证的访问身份（云端取自 x-qoder-user-context 的 user_id）。 */
@@ -50,6 +51,8 @@ export interface StoreState {
   analyses: StoredAnalysis[];
   /** 作业节点事件（卡 07 新增）。 */
   jobEvents: JobEvent[];
+  /** 文献工作区附属记录，旧分区可能没有此键。 */
+  paperStudies?: PaperStudy[];
 }
 
 /** 模型四段分析与引用关联（模型产物，不属于不可变规则快照）。 */
@@ -166,6 +169,10 @@ export interface DataService {
   renameProject(actor: Actor, projectId: string, name: string, now: string): Promise<Project>;
   /** 删除项目并级联清除其问题/运行/版本/作业/分析/事件/幂等键（单事务原子；卡 16 纯新增）。 */
   deleteProject(actor: Actor, projectId: string): Promise<void>;
+  importPaper(actor: Actor, input: { name: string; paper: PaperSource; now: string; projectId?: string }): Promise<Project>;
+  getPaperStudy(actor: Actor, projectId: string): Promise<PaperStudy | null>;
+  savePaperCandidates(actor: Actor, projectId: string, generation: { model: string; candidates: PaperCandidate[] }): Promise<PaperStudy>;
+  acceptPaperCandidate(actor: Actor, input: { projectId: string; candidateId: string; question: string; now: string }): Promise<Question>;
 
   createQuestion(
     actor: Actor,
@@ -221,6 +228,41 @@ function touch(project: Project, now: string): void {
   project.updatedAt = now;
 }
 
+function insertProject(draft: StoreState, name: string, now: string, projectId: string = crypto.randomUUID()): Project {
+  if (draft.projects.some((project) => project.projectId === projectId)) {
+    throw new ConflictError("duplicate_id", `项目 ID 已存在: ${projectId}`);
+  }
+  const project = { projectId, name, updatedAt: now };
+  draft.projects.push(project);
+  return project;
+}
+
+function insertQuestion(draft: StoreState, project: Project, input: {
+  questionId: string; rawClaim: string; confirmedClaim: Question["confirmedClaim"]; now: string;
+}): Question {
+  if (draft.questions.some((question) => question.questionId === input.questionId)) {
+    throw new ConflictError("duplicate_id", `问题 ID 已存在: ${input.questionId}`);
+  }
+  const question: Question = {
+    questionId: input.questionId,
+    projectId: project.projectId,
+    rawClaim: input.rawClaim,
+    confirmedClaim: input.confirmedClaim,
+    currentRevisionId: null,
+    status: "needs_input",
+  };
+  question.status = deriveQuestionStatus(draft, question);
+  draft.questions.push(question);
+  touch(project, input.now);
+  return question;
+}
+
+function requirePaperStudy(draft: StoreState, projectId: string): PaperStudy {
+  const paper = draft.paperStudies?.find((study) => study.projectId === projectId);
+  if (!paper) throw new NotFoundError("项目没有已入库的 PDF");
+  return paper;
+}
+
 function deriveQuestionStatus(draft: StoreState, question: Question): QuestionStatus {
   if (!question.confirmedClaim) return "needs_input";
   const pkg = buildEvidencePackage(question.confirmedClaim, projectRuns(draft, question.projectId), {
@@ -250,14 +292,65 @@ function orderedRevisions(draft: StoreState, question: Question): AnalysisRevisi
 export function createDataService(backend: StorageBackend): DataService {
   return {
     async createProject(actor, name, now, projectId) {
+      return backend.transact(actor, (draft) => clone(insertProject(draft, name, now, projectId)));
+    },
+
+    async importPaper(actor, { name, paper, now, projectId }) {
+      if (!paper.pages.some((page) => page.trim())) throw new Error("PDF 没有可入库的文字");
       return backend.transact(actor, (draft) => {
-        const id = projectId ?? crypto.randomUUID();
-        if (draft.projects.some((p) => p.projectId === id)) {
-          throw new ConflictError("duplicate_id", `项目 ID 已存在: ${id}`);
+        const project = projectId ? requireProject(draft, projectId) : insertProject(draft, name, now);
+        const studies = draft.paperStudies ??= [];
+        const existing = studies.find((study) => study.projectId === project.projectId);
+        if (existing && existing.sha256 !== paper.sha256) throw new ConflictError("paper_exists", "项目已入库另一份 PDF");
+        if (!existing) {
+          studies.push({ ...clone(paper), projectId: project.projectId, generation: null });
+          touch(project, now);
         }
-        const project: Project = { projectId: id, name, updatedAt: now };
-        draft.projects.push(project);
         return clone(project);
+      });
+    },
+
+    async getPaperStudy(actor, projectId) {
+      const state = await backend.read(actor);
+      requireProject(state, projectId);
+      return clone(state.paperStudies?.find((study) => study.projectId === projectId) ?? null);
+    },
+
+    async savePaperCandidates(actor, projectId, generation) {
+      return backend.transact(actor, (draft) => {
+        const study = requirePaperStudy(draft, projectId);
+        if (!study.generation?.candidates.length) {
+          study.generation = {
+            model: generation.model,
+            candidates: clone(generation.candidates).map((candidate) => ({
+              ...candidate,
+              id: crypto.randomUUID(),
+              questionId: null,
+            })),
+          };
+        }
+        return clone(study);
+      });
+    },
+
+    async acceptPaperCandidate(actor, input) {
+      const rawClaim = input.question.trim();
+      if (!rawClaim || rawClaim.length > 300) throw new Error("请填写 1 到 300 字符的研究问题");
+      return backend.transact(actor, (draft) => {
+        const project = requireProject(draft, input.projectId);
+        const study = requirePaperStudy(draft, input.projectId);
+        const candidate = study.generation?.candidates.find(({ id }) => id === input.candidateId);
+        if (!candidate) throw new NotFoundError("候选问题不存在");
+        if (candidate.questionId) {
+          const existing = draft.questions.find((question) => question.questionId === candidate.questionId);
+          if (!existing) throw new NotFoundError("已确认的研究问题不存在");
+          return clone(existing);
+        }
+        const question = insertQuestion(draft, project, {
+          questionId: crypto.randomUUID(), rawClaim, confirmedClaim: null, now: input.now,
+        });
+        candidate.questionId = question.questionId;
+        return clone(question);
       });
     },
 
@@ -312,6 +405,7 @@ export function createDataService(backend: StorageBackend): DataService {
           draft.jobs.filter((j) => questionIds.has(j.questionId)).map((j) => j.jobId),
         );
         draft.projects = draft.projects.filter((p) => p.projectId !== projectId);
+        if (draft.paperStudies) draft.paperStudies = draft.paperStudies.filter((study) => study.projectId !== projectId);
         draft.questions = draft.questions.filter((q) => !questionIds.has(q.questionId));
         draft.runs = draft.runs.filter((r) => r.projectId !== projectId);
         draft.revisions = draft.revisions.filter((r) => !questionIds.has(r.questionId));
@@ -331,23 +425,8 @@ export function createDataService(backend: StorageBackend): DataService {
 
     async createQuestion(actor, input) {
       return backend.transact(actor, (draft) => {
-        requireProject(draft, input.projectId);
-        if (draft.questions.some((q) => q.questionId === input.questionId)) {
-          throw new ConflictError("duplicate_id", `问题 ID 已存在: ${input.questionId}`);
-        }
-        const question: Question = {
-          questionId: input.questionId,
-          projectId: input.projectId,
-          rawClaim: input.rawClaim,
-          confirmedClaim: input.confirmedClaim,
-          currentRevisionId: null,
-          status: "needs_input",
-        };
-        question.status = deriveQuestionStatus(draft, question);
-        draft.questions.push(question);
         const project = requireProject(draft, input.projectId);
-        touch(project, input.now);
-        return clone(question);
+        return clone(insertQuestion(draft, project, input));
       });
     },
 

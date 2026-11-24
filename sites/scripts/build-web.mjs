@@ -11,6 +11,8 @@ const sitesRoot = join(here, "..");
 const outRoot = join(sitesRoot, "web", "assets", "gen");
 
 const sources = [
+  "src/core/grounding.ts",
+  "src/core/json.ts",
   "src/experiment/types.ts",
   "src/experiment/runs.ts",
   "src/experiment/claim.ts",
@@ -27,6 +29,7 @@ const sources = [
   "src/workflow/service.ts",
   "src/web/model.ts",
   "src/web/literature.ts",
+  "src/web/paper-study.ts",
 ];
 
 for (const rel of sources) {

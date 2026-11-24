@@ -42,6 +42,20 @@ npm test          # node --test，直接执行 .ts，无需构建
 
 要求 Node ≥ 22.18（内置类型剥离）。测试不依赖任何第三方包。
 
+## PDF 文献研究
+
+导入带文字层的 PDF 并创建项目后，工作台会在当前浏览器保存所有页的可提取文字。建项目时可选择自动生成候选问题。模型逐批阅读文字并返回待检验主张、研究价值、验证方法和 PDF 物理页码。通过原文回查的候选可编辑并确认，正式问题仍可打开引文对应页。旧 PDF 项目可补传相同文件并保留已有问题。
+
+运行 `npm run build:web`，再用 `node scripts/serve-web.mjs` 启动本地工作台。论文模型使用服务端环境变量配置。
+
+| 环境变量 | 值 |
+| --- | --- |
+| `AGENTFLOW_PAPER_MODEL_URL` | 兼容 Chat Completions 的完整接口地址 |
+| `AGENTFLOW_PAPER_MODEL_KEY` | 服务端 API 密钥 |
+| `AGENTFLOW_PAPER_MODEL_ID` | 服务商接受的模型标识 |
+
+浏览器调用同源 `POST /functions/v1/app/paper-questions`，模型服务接收论文文字而非 PDF 文件。站点部署需要为该路径接入受站点访问控制保护的后端，并用服务端 Secret 提供上述配置。路由可复用 `src/web/paper-model-api.mjs`。纯静态部署可入库和阅读全文，模型面板会显示接口未接通。
+
 ## 边界
 
 - 本层不做 I/O、不调用模型、不依赖运行时 API；`node:crypto` 是唯一平台依赖，
