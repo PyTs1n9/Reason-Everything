@@ -2965,9 +2965,9 @@ select:focus-visible,
   position: absolute;
   top: -16px;
   right: -20px;
-  width: 64px;
+  width: 144px;
   height: calc(100% + 32px);
-  object-fit: contain;
+  object-fit: cover;
   opacity: 0.94;
   filter: drop-shadow(0 2px 4px var(--shadow-soft));
   transform: translateZ(0);

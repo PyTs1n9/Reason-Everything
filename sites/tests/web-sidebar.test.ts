@@ -143,7 +143,14 @@ test("CSS：可变栏宽、收起归零、拖动把手与羽毛不拦截交互",
   assert.match(ruleBody(sidebarCss, ".sidebar-feather"), /pointer-events:\s*none/);
   assert.match(ruleBody(sidebarCss, ".sidebar-feather-mark"), /color:\s*var\(--brand\)/);
   assert.match(ruleBody(css, ".nav-btn"), /display:\s*inline-flex/);
+  const treeAt = sidebarCss.lastIndexOf("\n.sidebar-tree-image {");
+  assert.notEqual(treeAt, -1, "缺少独立树木位图规则");
+  const treeOpen = sidebarCss.indexOf("{", treeAt);
+  const treeClose = sidebarCss.indexOf("}", treeOpen);
+  const treeImage = sidebarCss.slice(treeOpen + 1, treeClose);
   assert.match(ruleBody(sidebarCss, ".sidebar-tree-image"), /display:\s*none/);
+  assert.match(treeImage, /width:\s*144px/);
+  assert.match(treeImage, /object-fit:\s*cover/);
   assert.match(ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image"), /display:\s*block/);
   assert.match(ruleBody(sidebarCss, ".sidebar-leaf-layer"), /pointer-events:\s*none/);
   assert.match(sidebarCss, /@keyframes sidebar-leaf-fall/);
