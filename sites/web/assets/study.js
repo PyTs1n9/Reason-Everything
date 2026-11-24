@@ -36,7 +36,6 @@ import {
   parseSidebarWidth,
   sidebarWidthFromKey,
 } from "./gen/src/web/sidebar.js";
-import { createLiteratureClient } from "./gen/src/web/literature.js";
 import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
 import { locateInRegions, locateInTextItems } from "./gen/src/web/paper-locate.js";
 import {
@@ -46,6 +45,9 @@ import {
   requestPaperOcr,
   toPaperRegions,
 } from "./gen/src/web/paper-ocr.js";
+import { createAgentService } from "./gen/src/agent/service.js";
+import { createSameOriginModelAdapter } from "./gen/src/web/model-adapter.js";
+import { MODEL_CONFIG_PATH } from "./gen/src/web/model-config-path.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -54,8 +56,59 @@ const backend = createIndexedDBBackend(indexedDB, DB_NAME);
 const data = createDataService(backend);
 const wfDeps = { storage: data, agent: null, now: () => new Date().toISOString() };
 const wf = createWorkflowService(wfDeps);
-// 验收驱动口：仅允许注入模型适配器（wfDeps.agent 生产恒为 null=未接通），供离线 mock 驱动 UI 验收；
-// 注入的输出以 provider=mock 标识展示，不冒充真实模型输出。
+let localTokenPromise = null;
+
+async function localToken() {
+  if (!localTokenPromise) {
+    localTokenPromise = fetch("/__agentflow_local.json", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("本地模型服务未启动");
+        const payload = await response.json();
+        if (typeof payload.token !== "string" || !payload.token) throw new Error("本地服务身份信息无效");
+        return payload.token;
+      })
+      .catch((error) => {
+        localTokenPromise = null;
+        throw error;
+      });
+  }
+  return localTokenPromise;
+}
+
+async function setAgent(enabled) {
+  wfDeps.agent = enabled
+    ? createAgentService(createSameOriginModelAdapter(fetch), { timeoutMs: 70_000 })
+    : null;
+}
+
+async function refreshAgent() {
+  try {
+    const snapshot = await modelConfigRequest("GET");
+    await setAgent(Boolean(snapshot.activeServiceId));
+    return snapshot;
+  } catch {
+    await setAgent(false);
+    throw new Error("本地模型服务未启动，请先运行 node scripts/serve-web.mjs");
+  }
+}
+
+async function modelConfigRequest(method, path = "", body) {
+  const send = async (token) => fetch(`${MODEL_CONFIG_PATH}${path}`, {
+    method,
+    headers: { "content-type": "application/json", "x-agentflow-local-token": token },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  let response = await send(await localToken());
+  if (response.status === 401) {
+    localTokenPromise = null;
+    response = await send(await localToken());
+  }
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `模型服务请求失败（HTTP ${response.status}）`);
+  return payload;
+}
+
+// 验收驱动口：生产使用同源模型适配器；测试可注入 mock，输出始终标 mock。
 globalThis.__agentflow = { wfDeps };
 
 const main = document.getElementById("main");
@@ -317,6 +370,7 @@ function parseRoute() {
   if (parts[0] === "project" && parts[1]) return { view: "project", projectId: parts[1], page: Number(parts[2]) || 0 };
   if (parts[0] === "new" && parts[1]) return { view: "newQuestion", projectId: parts[1] };
   if (parts[0] === "question" && parts[1]) return { view: "question", questionId: parts[1] };
+  if (parts[0] === "models") return { view: "models" };
   return { view: "projects" };
 }
 
@@ -338,6 +392,8 @@ async function render() {
       await renderNewQuestion(route.projectId);
     } else if (route.view === "question") {
       await renderQuestion(route.questionId);
+    } else if (route.view === "models") {
+      await renderModels();
     }
   } catch (error) {
     main.append(
@@ -446,8 +502,8 @@ async function renderSidebar(route) {
 
 // Lucide 图标内联 SVG（ISC 许可图形，dependency 冻结不引 lucide-react，取其图标路径手绘内联）
 const ICON_UPLOAD = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>';
-const ICON_GLOBE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
 const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
+const ICON_SLIDERS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>';
 const ICON_PIN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
 const ICON_EDIT = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
 const ICON_TRASH = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
@@ -517,9 +573,9 @@ async function renderProjects() {
   const importPdfBtn = h("button", { class: "btn btn-quiet", type: "button", id: "importPdfBtn" });
   importPdfBtn.insertAdjacentHTML("afterbegin", ICON_UPLOAD);
   importPdfBtn.append("导入 PDF");
-  const fetchPaperBtn = h("button", { class: "btn btn-quiet", type: "button", id: "fetchPaperBtn" });
-  fetchPaperBtn.insertAdjacentHTML("afterbegin", ICON_GLOBE);
-  fetchPaperBtn.append("抓取文献");
+  const modelBtn = h("button", { class: "btn btn-quiet", type: "button", id: "modelConfigBtn" });
+  modelBtn.insertAdjacentHTML("afterbegin", ICON_SLIDERS);
+  modelBtn.append("模型服务");
   const pdfInput = h("input", {
     type: "file",
     id: "pdfFileInput",
@@ -537,7 +593,7 @@ async function renderProjects() {
     searchBox,
   );
   const panel = h("div", { class: "dash-panel" },
-    h("div", { class: "quick-actions" }, importPdfBtn, fetchPaperBtn, newProjectBtn, pdfInput),
+    h("div", { class: "quick-actions" }, importPdfBtn, modelBtn, newProjectBtn, pdfInput),
   );
 
   const gridHost = h("div", { id: "projectGridHost" });
@@ -745,8 +801,8 @@ async function renderProjects() {
     pdfInput.value = "";
     if (file) importPdfFile(file, importPdfBtn);
   });
-  fetchPaperBtn.addEventListener("click", (event) => {
-    openFetchPaperModal(event.currentTarget);
+  modelBtn.addEventListener("click", () => {
+    location.hash = "#/models";
   });
   searchInput.addEventListener("input", () => {
     updateGrid();
@@ -1443,138 +1499,360 @@ function closeDeleteProjectModal(restoreFocus = true) {
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
 }
 
-// ---------- 抓取文献（Crossref 公共 API，仅取元数据不取全文） ----------
+// ---------- 模型服务配置（仅本地同源接口） ----------
 
-let fetchModalState = null;
+let modelViewSeq = 0;
 
-function openFetchPaperModal(trigger) {
-  closeFetchPaperModal(false);
-  const overlay = h("div", { class: "modal-overlay", id: "fetchModalOverlay" });
-  const modal = h("div", {
-    class: "modal modal--wide",
-    id: "fetchModal",
-    role: "dialog",
-    "aria-modal": "true",
-    "aria-labelledby": "fetchModalTitle",
-    tabindex: "-1",
+async function renderModels() {
+  const seq = ++modelViewSeq;
+  const status = h("p", { class: "aux", role: "status", text: "读取中…" });
+  const serviceList = h("div", { class: "model-services" });
+  const addBtn = h("button", {
+    class: "btn btn-primary", type: "button", id: "addModelService", text: "＋ 添加服务",
+    "aria-expanded": "false", "aria-controls": "addModelServicePanel",
   });
-
-  const client = createLiteratureClient((url, init) => fetch(url, init));
-  const doiInput = h("input", {
-    type: "text",
-    id: "fetchDoi",
-    autocomplete: "off",
-    placeholder: "如 10.1234/abcde",
-    "aria-label": "DOI",
+  const back = h("a", { class: "back-link", href: "#/", text: "← 返回项目列表" });
+  const addName = h("input", {
+    type: "text", id: "addModelName", value: "本地模型", maxlength: 80,
+    autocomplete: "off", required: true, "aria-label": "新服务名称",
   });
-  const doiBtn = h("button", { class: "btn btn-primary", type: "button", id: "fetchDoiBtn", text: "按 DOI 抓取" });
-  const queryInput = h("input", {
-    type: "text",
-    id: "fetchQuery",
-    autocomplete: "off",
-    placeholder: "标题关键词",
-    "aria-label": "标题关键词",
+  const addBaseUrl = h("input", {
+    type: "url", id: "addModelBaseUrl", maxlength: 500, required: true,
+    placeholder: "http://127.0.0.1:端口/v1", autocomplete: "off", "aria-label": "新服务 Base URL",
   });
-  const queryBtn = h("button", { class: "btn", type: "button", id: "fetchQueryBtn", text: "按标题检索" });
-  const status = h("p", { class: "aux fetch-status", role: "status" });
-  const results = h("div", { class: "fetch-results" });
-  const closeBtn = h("button", { class: "btn", type: "button", id: "fetchClose", text: "关闭" });
-
-  function fetchItem(info) {
-    const useBtn = h("button", { class: "btn btn-primary", type: "button", text: "用此文献新建项目" });
-    const item = h("div", { class: "fetch-item" },
-      h("p", { class: "fetch-item-title", text: info.title }),
-      h("p", { class: "aux", text: [info.authors, info.year, info.venue].filter(Boolean).join(" · ") || "（缺作者/年份/出处）" }),
-      h("p", { class: "aux mono", text: info.doi ? `DOI ${info.doi}` : "无 DOI" }),
-      h("div", { class: "suggestion-actions" }, useBtn),
-    );
-    useBtn.addEventListener("click", () => {
-      closeFetchPaperModal(false);
-      openCreateProjectModal(trigger, {
-        prefillName: info.title,
-        paperMeta: {
-          source: "crossref",
-          doi: info.doi,
-          title: info.title,
-          authors: info.authors,
-          year: info.year,
-          venue: info.venue,
-        },
-      });
-    });
-    return item;
-  }
-
-  async function runFetch(button, action) {
-    button.disabled = true;
-    status.classList.remove("fetch-error");
-    status.textContent = "抓取中…";
-    clear(results);
-    try {
-      const list = await action();
-      for (const info of list) results.append(fetchItem(info));
-      status.textContent = list.length > 0 ? `共 ${list.length} 条结果` : "没有找到匹配文献";
-    } catch (error) {
-      status.textContent = error && error.message ? error.message : String(error);
-      status.classList.add("fetch-error");
-    } finally {
-      button.disabled = false;
-    }
-  }
-
-  doiBtn.addEventListener("click", () => {
-    runFetch(doiBtn, async () => [await client.fetchByDoi(doiInput.value)]);
+  const addKey = h("input", {
+    type: "password", id: "addModelKey", maxlength: 4000, required: true,
+    autocomplete: "new-password", "aria-label": "新服务 API Key",
   });
-  queryBtn.addEventListener("click", () => {
-    runFetch(queryBtn, () => client.searchByTitle(queryInput.value));
+  const addReveal = h("button", { class: "btn btn-small", type: "button", text: "显示", "aria-pressed": "false" });
+  addReveal.addEventListener("click", () => {
+    const visible = addKey.type === "text";
+    addKey.type = visible ? "password" : "text";
+    addReveal.textContent = visible ? "显示" : "隐藏";
+    addReveal.setAttribute("aria-pressed", String(!visible));
   });
-  doiInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      doiBtn.click();
-    }
-  });
-  queryInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      queryBtn.click();
-    }
-  });
-  closeBtn.addEventListener("click", () => closeFetchPaperModal());
-
-  modal.append(
-    h("h2", { id: "fetchModalTitle", text: "抓取文献" }),
-    h("p", { class: "aux", text: "来源 Crossref 公共接口，仅获取文献元数据（题名/作者/年份/出处），不抓取全文。" }),
-    h("div", { class: "parse-line" },
-      h("div", { class: "field" },
-        h("label", { for: "fetchDoi", text: "DOI 精确查询" }),
-        doiInput,
-      ),
-      doiBtn,
+  const addError = h("p", { class: "field-error", role: "alert", hidden: true });
+  const addCancel = h("button", { class: "btn", type: "button", text: "取消" });
+  const addSave = h("button", { class: "btn btn-primary", type: "submit", text: "保存服务" });
+  const addForm = h("form", { class: "model-add-form", id: "addModelServiceForm" },
+    h("div", { class: "model-form-grid" },
+      h("div", { class: "field" }, h("label", { for: addName.id, text: "服务名称" }), addName),
+      h("div", { class: "field" }, h("label", { for: addBaseUrl.id, text: "Base URL" }), addBaseUrl),
     ),
-    h("div", { class: "parse-line" },
-      h("div", { class: "field" },
-        h("label", { for: "fetchQuery", text: "标题关键词检索" }),
-        queryInput,
+    h("div", { class: "field" },
+      h("label", { for: addKey.id, text: "API Key" }),
+      h("div", { class: "model-key-row" }, addKey, addReveal),
+      h("span", { class: "model-key-state", text: "只发送到本机服务端并加密保存，不写入浏览器存储。" }),
+    ),
+    addError,
+    h("div", { class: "model-add-actions" }, addSave, addCancel),
+  );
+  const addPanel = h("section", {
+    class: "model-add-panel", id: "addModelServicePanel", "aria-labelledby": "addModelServiceTitle", hidden: true,
+  },
+    h("h2", { id: "addModelServiceTitle", text: "添加模型服务" }),
+    h("p", { class: "aux", text: "填写兼容 OpenAI 风格的本机接口；支持自定义端口，例如 http://127.0.0.1:11434/v1。" }),
+    addForm,
+  );
+  const closeAdd = () => {
+    addPanel.hidden = true;
+    addBtn.setAttribute("aria-expanded", "false");
+    addError.hidden = true;
+    addError.textContent = "";
+  };
+  addBtn.addEventListener("click", () => {
+    if (addPanel.hidden) {
+      addPanel.hidden = false;
+      addBtn.setAttribute("aria-expanded", "true");
+      addName.focus();
+    } else {
+      closeAdd();
+      addBtn.focus();
+    }
+  });
+  addCancel.addEventListener("click", () => {
+    closeAdd();
+    addBtn.focus();
+  });
+  addPanel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    closeAdd();
+    addBtn.focus();
+  });
+  addForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    addError.hidden = true;
+    addSave.disabled = true;
+    addSave.textContent = "保存中…";
+    try {
+      const next = await modelConfigRequest("POST", "", {
+        name: addName.value,
+        baseUrl: addBaseUrl.value,
+        apiKey: addKey.value,
+      });
+      const added = next.services.at(-1);
+      await applySnapshot(next);
+      addName.value = "本地模型";
+      addBaseUrl.value = "";
+      addKey.value = "";
+      addKey.type = "password";
+      addReveal.textContent = "显示";
+      addReveal.setAttribute("aria-pressed", "false");
+      closeAdd();
+      if (added) {
+        stateByService.set(added.id, { expanded: true, loading: false, searched: false, error: "" });
+        draw();
+      }
+      toast(`已添加「${added?.name ?? "模型服务"}」`, "ok");
+      addBtn.focus();
+    } catch (error) {
+      addError.hidden = false;
+      addError.textContent = error.message;
+    } finally {
+      addSave.disabled = false;
+      addSave.textContent = "保存服务";
+    }
+  });
+
+  main.append(back,
+    h("header", { class: "page-head" },
+      h("div", { class: "field", style: "gap:6px" },
+        h("h1", { text: "模型服务" }),
+        h("p", { class: "aux", text: "添加兼容 OpenAI 风格的本机模型服务，已选模型将用于问题分析与论文候选生成。" }),
       ),
-      queryBtn,
+      addBtn,
+    ),
+    h("div", { class: "notice", role: "note" },
+      h("strong", { text: "仅本地模式" }),
+      h("p", { text: "云端功能已停用。API Key 加密保存在运行工作台的本机服务端，不会回传到浏览器；研究数据仍保存在当前浏览器。" }),
     ),
     status,
-    results,
-    h("div", { class: "modal-actions" }, closeBtn),
+    addPanel,
+    serviceList,
   );
 
-  fetchModalState = { trigger, overlay };
-  attachModalBehavior(overlay, modal, closeFetchPaperModal);
-  doiInput.focus();
-}
+  let snapshot = { services: [], activeServiceId: null };
+  const modelsByService = new Map();
+  const stateByService = new Map();
 
-function closeFetchPaperModal(restoreFocus = true) {
-  const current = fetchModalState;
-  if (!current) return;
-  current.overlay.remove();
-  fetchModalState = null;
-  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+  async function applySnapshot(next) {
+    snapshot = next;
+    await setAgent(Boolean(snapshot.activeServiceId));
+    status.classList.remove("field-error");
+    status.textContent = snapshot.services.length
+      ? `已配置 ${snapshot.services.length} 个服务；当前使用 ${snapshot.services.find((item) => item.id === snapshot.activeServiceId)?.name ?? "未选择"}。`
+      : "还没有模型服务，请先添加一个本机服务。";
+    draw();
+    return snapshot;
+  }
+
+  async function reload() {
+    status.textContent = "读取中…";
+    try {
+      return await applySnapshot(await modelConfigRequest("GET"));
+    } catch (error) {
+      await setAgent(false);
+      status.textContent = error.message;
+      status.classList.add("field-error");
+      return null;
+    }
+  }
+
+  function card(service) {
+    const state = stateByService.get(service.id) ?? { expanded: false, loading: false, searched: false, error: "" };
+    stateByService.set(service.id, state);
+    const active = snapshot.activeServiceId === service.id;
+    const models = modelsByService.get(service.id) ?? [];
+    const cardNode = h("article", { class: "model-card", dataset: { serviceId: service.id } });
+    const toggle = h("button", {
+      class: "model-card-toggle", type: "button", "aria-expanded": String(state.expanded), "aria-controls": `model-details-${service.id}`,
+    }, h("span", { class: "model-card-title", text: service.name }),
+      h("span", { class: `model-card-meta${active ? " is-active" : ""}`, text: active ? "使用中" : "未选择" }),
+      h("span", { class: "model-card-meta", text: state.searched ? `${models.length} 个模型` : service.model ? "已选 1 个模型" : "0 个模型" }),
+      h("span", { class: "model-card-chevron", "aria-hidden": "true", text: state.expanded ? "▾" : "▸" }));
+    toggle.addEventListener("click", () => {
+      state.expanded = !state.expanded;
+      toggle.setAttribute("aria-expanded", String(state.expanded));
+      toggle.querySelector(".model-card-chevron").textContent = state.expanded ? "▾" : "▸";
+      details.hidden = !state.expanded;
+    });
+
+    const name = h("input", { type: "text", id: `model-name-${service.id}`, value: service.name, maxlength: 80, autocomplete: "off", "aria-label": "服务名称" });
+    const baseUrl = h("input", { type: "url", id: `model-url-${service.id}`, value: service.baseUrl, maxlength: 500, autocomplete: "off", "aria-label": "Base URL" });
+    const keyInput = h("input", { type: "password", id: `model-key-${service.id}`, placeholder: service.hasApiKey ? service.apiKeyHint : "请输入 API Key", autocomplete: "new-password", maxlength: 4000, "aria-label": "API Key" });
+    const reveal = h("button", { class: "btn btn-small", type: "button", text: "显示", "aria-pressed": "false" });
+    reveal.addEventListener("click", () => {
+      const visible = keyInput.type === "text";
+      keyInput.type = visible ? "password" : "text";
+      reveal.textContent = visible ? "显示" : "隐藏";
+      reveal.setAttribute("aria-pressed", String(!visible));
+    });
+    const configured = h("span", { class: "model-key-state", text: service.hasApiKey ? `已配置 ${service.apiKeyHint}` : "未配置" });
+    const save = h("button", { class: "btn btn-primary", type: "button", text: "保存" });
+    const search = h("button", { class: "btn", type: "button", disabled: state.loading, text: state.loading ? "搜索中…" : "搜索模型" });
+    const remove = h("button", { class: "btn btn-danger", type: "button", text: "删除" });
+    const error = h("p", { class: "field-error", role: "alert", hidden: true });
+    const searchStatus = h("p", { class: "aux", role: "status" });
+    const deleteConfirm = h("div", { class: "model-delete-confirm", role: "group", "aria-label": "确认删除模型服务", hidden: true },
+      h("p", { text: `删除「${service.name}」？本机服务端保存的 API Key 也会一并移除。` }),
+      h("div", { class: "model-delete-actions" },
+        h("button", { class: "btn btn-danger", type: "button", id: `confirm-delete-${service.id}`, text: "确认删除" }),
+        h("button", { class: "btn", type: "button", id: `cancel-delete-${service.id}`, text: "取消" }),
+      ),
+    );
+
+    function updateSearchStatus() {
+      searchStatus.classList.toggle("field-error", Boolean(state.error));
+      searchStatus.textContent = state.loading
+        ? "正在请求模型列表…"
+        : state.error || (state.searched ? `已找到 ${models.length} 个模型` : "保存后可搜索模型。");
+    }
+    function showError(message) {
+      state.error = message;
+      error.hidden = false;
+      error.textContent = message;
+      updateSearchStatus();
+    }
+    function clearError() {
+      state.error = "";
+      error.hidden = true;
+      error.textContent = "";
+      updateSearchStatus();
+    }
+    updateSearchStatus();
+
+    const modelSelect = h("select", { id: `model-select-${service.id}`, "aria-label": "选择模型" },
+      h("option", { value: service.model, text: service.model ? `当前：${service.model}` : "请选择模型" }),
+      ...models.filter((id) => id !== service.model).map((id) => h("option", { value: id, text: id })),
+    );
+    modelSelect.value = service.model;
+    modelSelect.addEventListener("change", async () => {
+      if (await persistService()) toast("已切换当前模型", "ok");
+    });
+
+    const details = h("div", { class: "model-details", id: `model-details-${service.id}`, hidden: !state.expanded },
+      h("div", { class: "model-form-grid" },
+        h("div", { class: "field" }, h("label", { for: name.id, text: "服务名称" }), name),
+        h("div", { class: "field" }, h("label", { for: baseUrl.id, text: "Base URL" }), baseUrl),
+      ),
+      h("div", { class: "field" },
+        h("label", { for: keyInput.id, text: "API Key" }),
+        h("div", { class: "model-key-row" }, keyInput, reveal),
+        configured,
+      ),
+      h("div", { class: "model-actions" }, save, search, remove),
+      error,
+      h("div", { class: "field" }, h("label", { for: modelSelect.id, text: "模型选择" }), modelSelect),
+      searchStatus,
+      h("div", { class: "model-options", role: "listbox", "aria-label": "可用模型" },
+        models.length
+          ? models.map((id) => h("button", {
+              class: `model-option${id === service.model ? " is-selected" : ""}`, type: "button", role: "option",
+              "aria-selected": String(id === service.model), text: id,
+              onclick: () => { modelSelect.value = id; modelSelect.dispatchEvent(new Event("change")); },
+            }))
+          : h("p", { class: "aux", text: state.searched ? "模型列表为空。" : "尚未搜索模型。" }),
+      ),
+      deleteConfirm,
+    );
+
+    async function persistService() {
+      clearError();
+      save.disabled = true;
+      search.disabled = true;
+      try {
+        const next = await modelConfigRequest("POST", "", {
+          serviceId: service.id,
+          name: name.value,
+          baseUrl: baseUrl.value,
+          apiKey: keyInput.value,
+          model: modelSelect.value,
+        });
+        keyInput.value = "";
+        await applySnapshot(next);
+        toast(`已保存「${next.services.find((item) => item.id === service.id)?.name ?? name.value.trim()}」`, "ok");
+        return next.services.find((item) => item.id === service.id) ?? null;
+      } catch (saveError) {
+        showError(saveError.message);
+        return null;
+      } finally {
+        save.disabled = false;
+        search.disabled = state.loading;
+      }
+    }
+
+    save.addEventListener("click", () => { void persistService(); });
+
+    search.addEventListener("click", async () => {
+      const changed = name.value.trim() !== service.name || baseUrl.value.trim() !== service.baseUrl || Boolean(keyInput.value);
+      state.loading = true;
+      clearError();
+      search.disabled = true;
+      search.textContent = "搜索中…";
+      try {
+        if (changed && !await persistService()) return;
+        const result = await modelConfigRequest("POST", "/models", { serviceId: service.id });
+        modelsByService.set(service.id, result.models);
+        state.searched = true;
+      } catch (searchError) {
+        showError(searchError.message);
+      } finally {
+        state.loading = false;
+        search.disabled = false;
+        search.textContent = "搜索模型";
+        updateSearchStatus();
+        draw();
+      }
+    });
+
+    remove.addEventListener("click", () => {
+      state.expanded = true;
+      details.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.querySelector(".model-card-chevron").textContent = "▾";
+      deleteConfirm.hidden = false;
+      deleteConfirm.querySelector(".btn-danger").focus();
+    });
+    deleteConfirm.querySelector(".btn:not(.btn-danger)").addEventListener("click", () => {
+      deleteConfirm.hidden = true;
+      remove.focus();
+    });
+    deleteConfirm.querySelector(".btn-danger").addEventListener("click", async () => {
+      const confirm = deleteConfirm.querySelector(".btn-danger");
+      const cancel = deleteConfirm.querySelector(".btn:not(.btn-danger)");
+      confirm.disabled = true;
+      cancel.disabled = true;
+      remove.disabled = true;
+      try {
+        const next = await modelConfigRequest("DELETE", `/${encodeURIComponent(service.id)}`);
+        stateByService.delete(service.id);
+        modelsByService.delete(service.id);
+        await applySnapshot(next);
+        toast(`已删除「${service.name}」`, "ok");
+      } catch (removeError) {
+        showError(removeError.message);
+        confirm.disabled = false;
+        cancel.disabled = false;
+        remove.disabled = false;
+      }
+    });
+
+    cardNode.append(toggle, details);
+    return cardNode;
+  }
+
+  function draw() {
+    if (seq !== modelViewSeq) return;
+    clear(serviceList);
+    if (!snapshot.services.length) {
+      serviceList.append(h("div", { class: "empty" }, h("p", { text: "暂无模型服务" })));
+      return;
+    }
+    snapshot.services.forEach((service) => serviceList.append(card(service)));
+  }
+
+  await reload();
 }
 
 /** Ctrl K 全局快捷键：任意视图聚焦项目搜索（不在项目列表则先跳回）。 */
@@ -1613,12 +1891,17 @@ function paperHasReadableText(paper) {
 const paperJobs = new Map();
 
 async function requestPaperModel(input) {
-  const response = await fetch(PAPER_MODEL_PATH, {
+  const send = async (token) => fetch(PAPER_MODEL_PATH, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-agentflow-local-token": token },
     body: JSON.stringify(input),
     signal: AbortSignal.timeout(70_000),
   });
+  let response = await send(await localToken());
+  if (response.status === 401) {
+    localTokenPromise = null;
+    response = await send(await localToken());
+  }
   if (response.status === 404 || response.status === 405 || !response.headers.get("content-type")?.includes("application/json")) {
     throw new Error("站点的论文模型接口未接通，全文已保存在本机");
   }
@@ -3468,6 +3751,7 @@ async function renderQuestion(questionId) {
         },
       }),
       unavailable ? h("p", { class: "aux", text: "模型服务未接通：需先在站点接入模型服务，重试才会生效。" }) : null,
+      unavailable ? h("a", { class: "back-link", href: "#/models", text: "前往模型服务配置 →" }) : null,
     );
   }
 
@@ -4348,4 +4632,5 @@ window.addEventListener("hashchange", () => {
   render();
 });
 
+void refreshAgent().catch((error) => console.info(`模型服务未启用：${error.message}`));
 render();

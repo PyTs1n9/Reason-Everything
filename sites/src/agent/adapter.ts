@@ -1,11 +1,8 @@
 /**
  * 模型适配器契约：可切换实现，离线测试全走 mock。
  *
- * 真实路径（本环境核对结论见 progress.md 卡 06）：
- * 浏览器 → 同源 Sites Function → Qoder Cloud Agents（apiOrigin=https://api.qoder.com，
- * apiPathPrefix=/api/v1/cloud，get_context 实测 configured=true）。中段 Function 与
- * QODER_PAT 尚未开通（需用户对 PAT 创建的明确确认），故本卡交付适配器 + mock。
- * 密钥只放平台 Secret；前端与本层不接触任何凭据。
+ * 浏览器路径：同源本地 Node 服务 → 用户配置的本机 OpenAI 兼容接口。
+ * API Key 由服务端加密保存，前端只接触脱敏状态；托管云端功能未启用。
  */
 
 import type { ClaimSpec } from "../experiment/types.ts";

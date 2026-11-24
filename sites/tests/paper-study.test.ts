@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createDataService, MemoryBackend } from "../src/experiment/storage.ts";
 import { handlePaperModel } from "../src/web/paper-model-api.mjs";
+import { createModelConfigService } from "../src/web/model-config.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH, type PaperSource } from "../src/web/paper-study.ts";
 
 const intro = "The study used a single supervised corpus.";
@@ -20,6 +24,9 @@ const candidate = {
   citations: [{ page: 3, quote: limitation }],
 };
 const model = "mock-paper";
+const keyDir = mkdtempSync(join(tmpdir(), "agentflow-paper-model-"));
+const keyFile = join(keyDir, ".model-keys.json");
+process.on("exit", () => rmSync(keyDir, { recursive: true, force: true }));
 const reply = (candidates: unknown[]) => ({ model, text: JSON.stringify({ candidates }) });
 
 test("PDF 提取读至末页，保留空页和原文行间断行", async () => {
@@ -126,32 +133,53 @@ test("旧项目补录全文时保留项目和已有问题，同一份 PDF 重试
   assert.deepEqual(await data.listQuestions(actor, projectId), [question]);
 });
 
-const config = { url: "https://mock.invalid/chat/completions", key: "mock-secret", model };
 const local = `http://127.0.0.1:8318${PAPER_MODEL_PATH}`;
 function makeRequest(origin = "http://127.0.0.1:8318", body: unknown = { title: paper.title, previous: [], passages: [{ page: 3, text: limitation }] }) {
   return new Request(local, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
 test("服务端调用兼容模型 API，提示词与密钥由服务端提供", async () => {
-  const response = await handlePaperModel(makeRequest(), config, async (url: string, init: RequestInit) => {
-    assert.equal(url, config.url);
+  const service = createModelConfigService({ filePath: keyFile, encryptionKey: "test-key", fetchImpl: async (url: string, init: RequestInit) => {
+    assert.equal(url, "http://127.0.0.1/v1/chat/completions");
     assert.equal(new Headers(init.headers).get("authorization"), "Bearer mock-secret");
     const payload = JSON.parse(String(init.body));
     assert.equal(payload.model, model);
     assert.match(payload.messages[0].content, /物理 PDF 页码/);
     assert.match(payload.messages[1].content, /short documents/);
     return Response.json({ model, choices: [{ message: { content: reply([candidate]).text } }] });
-  });
+  } });
+  await service.save({ name: "mock", baseUrl: "http://127.0.0.1/v1", apiKey: "mock-secret", model });
+  const response = await handlePaperModel(makeRequest(), { filePath: keyFile, encryptionKey: "test-key" }, service);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), reply([candidate]));
 });
 
-test("模型接口如实区分未配置、坏输入和服务失败", async () => {
-  const unused = async () => { assert.fail("不应发起上游请求"); };
-  assert.equal((await handlePaperModel(makeRequest(), {}, unused)).status, 503);
-  assert.equal((await handlePaperModel(makeRequest("https://offsite.invalid"), config, unused)).status, 403);
-  assert.equal((await handlePaperModel(makeRequest(undefined, { title: "x", passages: [] }), config, unused)).status, 400);
-  const unavailable = await handlePaperModel(makeRequest(), config, async () => new Response(null, { status: 429 }));
+test("模型接口如实区分未配置、坏输入、同源拒绝和服务失败", async () => {
+  const missingFile = join(keyDir, "missing-model-config.json");
+  assert.equal((await handlePaperModel(makeRequest(), {}, createModelConfigService({ filePath: missingFile, encryptionKey: "test" }))).status, 503);
+  assert.equal((await handlePaperModel(makeRequest("https://offsite.invalid"), {}, createModelConfigService({ filePath: missingFile, encryptionKey: "test" }))).status, 403);
+  assert.equal((await handlePaperModel(makeRequest(undefined, { title: "x", passages: [] }), {}, createModelConfigService({ filePath: keyFile, encryptionKey: "test-key" }))).status, 400);
+  const unavailable = await handlePaperModel(makeRequest(), { filePath: missingFile, encryptionKey: "test" }, {
+    list: async () => ({ services: [], activeServiceId: "configured" }),
+    complete: async () => { throw new Error("模型服务返回 HTTP 429"); },
+  });
   assert.equal(unavailable.status, 502);
   assert.match((await unavailable.json()).error, /HTTP 429/);
+});
+
+test("论文模型使用所选服务的同源调用，未配置时不发请求", async () => {
+  const configured = {
+    list: async () => ({ services: [{ id: "s1", model: "mock-paper" }], activeServiceId: "s1" }),
+    complete: async (messages: unknown[], model: string) => {
+      assert.equal(model, "mock-paper");
+      assert.match(JSON.stringify(messages), /short documents/);
+      return { text: reply([candidate]).text, model };
+    },
+  };
+  const response = await handlePaperModel(makeRequest(), {}, configured);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), reply([candidate]));
+  const missing = await handlePaperModel(makeRequest(), {}, { list: async () => ({ services: [], activeServiceId: null }) });
+  assert.equal(missing.status, 503);
+  assert.match((await missing.json()).error, /请先在模型服务中添加服务/);
 });

@@ -109,31 +109,33 @@ test("OCR 服务端拒绝跨源与错误方法，未配置时返回 503", async 
   assert.equal(badType.status, 415);
 });
 
-test("外部 OCR 密钥只留在服务端，请求携带服务端模型并透传规范化区域", async () => {
-  let called = 0;
+test("OCR 仅调用本机适配器，忽略外部地址与密钥配置", async () => {
+  let localInput: unknown = null;
   const response = await handlePaperOcr(makeRequest(), {
     url: "https://ocr.example.invalid/recognize",
     key: "server-only-secret",
-    model: "server-ocr-model",
-  }, async (url, init) => {
-    called += 1;
-    assert.equal(url, "https://ocr.example.invalid/recognize");
-    assert.equal(new Headers(init.headers).get("authorization"), "Bearer server-only-secret");
-    assert.deepEqual(JSON.parse(String(init.body)), { ...input, model: "server-ocr-model" });
-    return Response.json(ocrResult);
+    localWindows: true,
+    scriptPath: "ocr-windows.ps1",
+  }, async (value) => {
+    localInput = value;
+    return readOcrResult(ocrResult);
   });
-  assert.equal(called, 1);
+  assert.deepEqual(localInput, input);
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.regions.length, 3);
   assert.equal(JSON.stringify(body).includes("server-only-secret"), false);
 });
 
-test("外部 OCR 失败与超时返回可重试状态，不泄露上游详情", async () => {
-  const config = { url: "https://ocr.example.invalid/recognize", key: "secret" };
-  const failed = await handlePaperOcr(makeRequest(), config, async () => new Response("upstream secret", { status: 429 }));
+test("本机 OCR 失败与超时返回可重试状态，不泄露执行详情", async () => {
+  const config = { localWindows: true, scriptPath: "ocr-windows.ps1" };
+  const failed = await handlePaperOcr(makeRequest(), config, async () => {
+    throw new Error("local secret");
+  });
   assert.equal(failed.status, 502);
-  assert.match((await failed.json()).error, /HTTP 429/);
+  const failedBody = await failed.json();
+  assert.match(failedBody.error, /本机 OCR 识别失败/);
+  assert.doesNotMatch(JSON.stringify(failedBody), /local secret/);
   const timeout = await handlePaperOcr(makeRequest(), config, async () => {
     throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
   });
@@ -143,7 +145,7 @@ test("外部 OCR 失败与超时返回可重试状态，不泄露上游详情", 
 
 test("本机 OCR 适配器可注入，Windows 脚本读取临时图片后清理", async () => {
   let localInput: unknown = null;
-  const local = await handlePaperOcr(makeRequest(), { localWindows: true, scriptPath: "ocr-windows.ps1" }, fetch, async (value) => {
+  const local = await handlePaperOcr(makeRequest(), { localWindows: true, scriptPath: "ocr-windows.ps1" }, async (value) => {
     localInput = value;
     return readOcrResult(ocrResult);
   });

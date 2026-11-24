@@ -415,6 +415,8 @@ label {
 input[type="text"],
 input[type="search"],
 input[type="number"],
+input[type="url"],
+input[type="password"],
 textarea,
 select {
   font: inherit;
@@ -2801,6 +2803,50 @@ h1 .project-title-input[aria-invalid="true"] {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--tag-bg);
+}
+
+/* ---------- 卡 24：模型服务配置 ---------- */
+
+.model-services {
+  display: grid;
+  gap: 16px;
+}
+
+.model-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.model-card-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 20px;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 64px;
+  padding: 16px 20px;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-card-toggle:hover {
+  background: var(--bg);
+}
+
+.model-card-title {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.model-card-meta {
   color: var(--ink-2);
   font-size: 12px;
   white-space: nowrap;
@@ -2863,6 +2909,46 @@ h1 .project-title-input[aria-invalid="true"] {
 }
 
 .pdf-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.model-card-meta.is-active {
+  color: var(--brand);
+}
+
+.model-card-chevron {
+  color: var(--ink-2);
+}
+
+.model-details {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.model-details[hidden] {
+  display: none;
+}
+
+.model-add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.model-add-panel[hidden],
+.model-delete-confirm[hidden] {
+  display: none;
+}
+
+.model-add-panel h2 {
   margin: 0;
   font-size: 18px;
 }
@@ -3189,5 +3275,123 @@ body.sidebar-resizing * {
   .topbar-back {
     gap: 4px;
     padding: 0 2px;
+  }
+}
+.model-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.model-add-actions,
+.model-delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-add-actions {
+  justify-content: flex-end;
+}
+
+.model-delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+
+.model-delete-confirm p {
+  margin: 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.model-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.model-key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.model-key-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-key-state {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-option {
+  max-width: 100%;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.model-option:hover,
+.model-option.is-selected {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--bg);
+}
+
+.model-key-row .btn-small {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .model-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-add-panel,
+  .model-details {
+    padding: 16px;
+  }
+
+  .model-add-actions .btn,
+  .model-delete-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .model-card-toggle {
+    grid-template-columns: minmax(0, 1fr) auto 16px;
+    gap: 8px;
+    padding: 14px 16px;
+  }
+
+  .model-card-toggle .model-card-meta:last-of-type {
+    display: none;
   }
 }

@@ -1,8 +1,11 @@
-# AgentFlow · Sites 版
+# AgentFlow · 本地研究工作台
 
-Qoder Sites 的原生交付形态：静态前端 + Deno Edge Function + 托管数据库。
-本目录是**唯一交付物**；根目录的 Python 黄金实现（`app/` 等）已退役并归档到项目外，
-只作逐字节对齐参照，归档路径见 `docs/progress.md`。
+本目录是唯一交付物：静态前端 + 本机同源 Node 服务。研究数据保存在当前浏览器的
+IndexedDB；模型服务配置与 API Key 由本机服务端加密保存。云端功能已停用，不依赖
+Deno Edge Function、托管数据库或平台 Secret。
+
+根目录的 Python 黄金实现（`app/` 等）已退役并归档到项目外，只作逐字节对齐参照，
+归档路径见 `docs/progress.md`。
 
 ## 为什么还要和 Python 版对齐
 
@@ -31,41 +34,39 @@ src/core/
   cards.ts      卡片结构校验 + 逐字回查 + 锚点编号
   audit.ts      四态审计协议与机械校验
   json.ts       模型输出的 JSON 解析（围栏容忍、失败即抛）
-tests/          37 项离线用例，零依赖，全部不联网
+tests/          离线用例，零第三方依赖，模型调用全部使用 mock
 ```
 
 ## 运行
 
 ```bash
 npm test          # node --test，直接执行 .ts，无需构建
+npm run verify:flow
+npm run build:web
+node scripts/serve-web.mjs
 ```
 
-要求 Node ≥ 22.18（内置类型剥离）。测试不依赖任何第三方包。
+要求 Node ≥ 22.18（内置类型剥离）。测试不依赖任何第三方包。启动后打开
+`http://127.0.0.1:8318/web/index.html`；服务只绑定回环地址，模型上游也只允许本机接口。
 
 ## PDF 文献研究
 
 导入带文字层的 PDF 并创建项目后，工作台会在当前浏览器保存所有页的可提取文字。建项目时可选择自动生成候选问题。模型逐批阅读文字并返回待检验主张、研究价值、验证方法和 PDF 物理页码。通过原文回查的候选可编辑并确认，正式问题仍可打开引文对应页。旧 PDF 项目可补传相同文件并保留已有问题。
 
-运行 `npm run build:web`，再用 `node scripts/serve-web.mjs` 启动本地工作台。论文模型使用服务端环境变量配置。
+运行 `npm run build:web`，再用 `node scripts/serve-web.mjs` 启动本地工作台。在页面
+「模型服务」中添加服务名称、本机 Base URL 和 API Key，搜索并选择模型后，问题分析与
+论文候选生成会复用同一份配置。
 
-| 环境变量 | 值 |
-| --- | --- |
-| `AGENTFLOW_PAPER_MODEL_URL` | 兼容 Chat Completions 的完整接口地址 |
-| `AGENTFLOW_PAPER_MODEL_KEY` | 服务端 API 密钥 |
-| `AGENTFLOW_PAPER_MODEL_ID` | 服务商接受的模型标识 |
-
-浏览器调用同源 `POST /functions/v1/app/paper-questions`，模型服务接收论文文字而非 PDF 文件。站点部署需要为该路径接入受站点访问控制保护的后端，并用服务端 Secret 提供上述配置。路由可复用 `src/web/paper-model-api.mjs`。纯静态部署可入库和阅读全文，模型面板会显示接口未接通。
+浏览器只收到 `hasApiKey` 与脱敏提示。API Key 以 AES-256-GCM 密文写入
+`sites/.model-keys.json`，本机密钥文件为 `sites/.agentflow-model-keys.key`，两者均已
+加入 `.gitignore`。模型列表与对话请求由同源服务端转发，使用 Bearer 鉴权并阻止重定向。
+直接双击静态 HTML 可以浏览已有研究数据，但不能安全保存密钥或调用模型；这两项需要
+本机 Node 服务。
 
 ## 边界
 
-- 本层不做 I/O、不调用模型、不依赖运行时 API；`node:crypto` 是唯一平台依赖，
-  Deno 与 Node 均原生支持。
-- 模型调用、数据库、HTTP 路由在下一层（`src/functions/`），尚未实现。
-- 浏览器端若需要复用回查逻辑，`grounding.ts` 可直接打包；`cards.ts` 的
-  `makeAnchorId` 依赖 `node:crypto`，届时需替换为 `crypto.subtle` 的异步版本。
-
-## 下一步
-
-1. S2：五个节点函数（cards / note / audit / gate / archive）与模型客户端
-2. S3：前端接 pdf.js 与端点，保留现有 UI
-3. S4：发布到 Sites，公开访问，验收
+- 核心计算与证据回查保持确定性；模型只解读已验证证据，不替代配对计算。
+- 模型凭据不进入 localStorage、IndexedDB、Cookie、URL、日志、导出文件或静态构建产物。
+- 本机服务只允许 `127.0.0.1`、`localhost`、`::1` 上游；未配置真实模型时，分析路径
+  可由离线 mock 或独立规则报告验证。
+- Windows 不完整实现 POSIX 文件权限位；凭据文件仍由本机用户账户与目录权限保护。

@@ -6,6 +6,7 @@ const study = readFileSync(new URL("../web/assets/study.js", import.meta.url), "
 const css = readFileSync(new URL("../web/assets/study.css", import.meta.url), "utf8");
 const serve = readFileSync(new URL("../scripts/serve-web.mjs", import.meta.url), "utf8");
 const build = readFileSync(new URL("../scripts/build-web.mjs", import.meta.url), "utf8");
+const ocrApi = readFileSync(new URL("../src/web/paper-ocr-api.mjs", import.meta.url), "utf8");
 
 test("PDF 导入保留原字节与逐页识别状态，扫描页必须先保存再可选 OCR", () => {
   assert.match(study, /pageSources:\s*pages\.map\(\(text\)\s*=>\s*text\.trim\(\)\s*\?\s*"text"\s*:\s*"pending"\)/);
@@ -66,12 +67,13 @@ test("OCR 面板与原版查看器样式完整，窄屏仍保留逐页操作", (
   assert.match(css, /@media \(max-width: 767px\)[\s\S]*\.ocr-page-row\s*\{/);
 });
 
-test("构建与服务端接线包含 OCR，密钥仅从服务端环境读取", () => {
+test("构建与服务端仅接本地 OCR，不保留外部上游或密钥配置", () => {
   assert.match(build, /"src\/web\/paper-locate\.ts"/);
   assert.match(build, /"src\/web\/paper-ocr\.ts"/);
   assert.match(serve, /handlePaperOcr/);
   assert.match(serve, /PAPER_OCR_PATH/);
-  assert.match(serve, /AGENTFLOW_PAPER_OCR_KEY/);
   assert.match(serve, /localWindows:\s*process\.platform === "win32"/);
-  assert.doesNotMatch(study, /AGENTFLOW_PAPER_OCR_KEY/);
+  assert.doesNotMatch(serve, /AGENTFLOW_PAPER_OCR_(?:URL|KEY|MODEL)/);
+  assert.doesNotMatch(ocrApi, /config\.url|config\.key|complete = fetch|ocr\.example/);
+  assert.doesNotMatch(study, /AGENTFLOW_PAPER_OCR_(?:URL|KEY|MODEL)/);
 });
