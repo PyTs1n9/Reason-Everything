@@ -1225,9 +1225,9 @@ async function renderProject(projectId) {
   if (!project) throw new Error(`项目不存在: ${projectId}`);
 
   const nameHost = h("span", { id: "projectTitle", text: project.name });
+  const backLink = h("a", { class: "back-link back-link--follow", href: "#/", text: "← 返回项目列表" });
   const head = h("div", { class: "page-head" },
     h("div", { class: "field", style: "gap:6px" },
-      h("a", { class: "back-link", href: "#/", text: "← 返回项目列表" }),
       h("h1", {}, nameHost),
     ),
     h("div", { class: "empty-actions" },
@@ -1249,7 +1249,7 @@ async function renderProject(projectId) {
   );
 
   const listHost = h("div", { id: "questionListHost" });
-  main.append(head, renameRow, listHost);
+  main.append(backLink, head, renameRow, listHost);
 
   document.getElementById("renameProjectBtn").addEventListener("click", () => {
     renameRow.hidden = false;
@@ -1399,9 +1399,9 @@ async function renderNewQuestion(projectId) {
   resetEntry(projectId);
   entry.existingRuns = await data.listRuns(ACTOR, projectId);
 
+  const backLink = h("a", { class: "back-link back-link--follow", href: `#/project/${projectId}`, text: "← 返回项目" });
   const head = h("div", { class: "page-head" },
     h("div", { class: "field", style: "gap:6px" },
-      h("a", { class: "back-link", href: `#/project/${projectId}`, text: "← 返回项目" }),
       h("h1", { text: "新建研究问题" }),
     ),
     h("span", { class: "aux", text: `项目：${project.name}` }),
@@ -1528,7 +1528,7 @@ async function renderNewQuestion(projectId) {
     claimSection, dataSection, mappingSection, runSection, scopeSection, submitRow,
   );
 
-  main.append(head, form);
+  main.append(backLink, head, form);
 
   // ---- 事件 ----
 

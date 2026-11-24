@@ -238,6 +238,20 @@ p {
   text-decoration: underline;
 }
 
+/* 卡 17：返回链接滚动跟随（sticky 吸顶于顶栏下方 8px，胶囊底色避免内容穿透）；
+  负外边距抵消 .content 间距，保持与标题原 6px 间距不变。 */
+.back-link--follow {
+  position: sticky;
+  top: 72px;
+  z-index: 20;
+  align-self: flex-start;
+  margin-bottom: -18px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 /* ---------- 按钮 / 输入 ---------- */
 
 .btn {
@@ -1145,6 +1159,11 @@ select:focus-visible,
 
   .back-link {
     min-height: 44px;
+  }
+
+  .back-link--follow {
+    top: 64px;
+    margin-bottom: -10px;
   }
 
   .search-field {
