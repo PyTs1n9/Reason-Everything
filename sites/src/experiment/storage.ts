@@ -53,6 +53,95 @@ export interface StoreState {
   jobEvents: JobEvent[];
   /** 文献工作区附属记录，旧分区可能没有此键。 */
   paperStudies?: PaperStudy[];
+  /** 问题级研究记录，旧分区可能没有此键；不改变四种冻结业务身份。 */
+  researchRecords?: ResearchRecordState;
+}
+
+export type VerificationItemStatus = "pending" | "in_progress" | "recorded";
+export type VerificationConclusion = "supported" | "not_supported" | "insufficient";
+
+export interface ResearchSource {
+  sourceId: string;
+  title: string;
+  filename: string;
+  paperSha256: string;
+  page: number;
+  quote: string;
+}
+
+export interface ResearchNote {
+  noteId: string;
+  questionId: string;
+  body: string;
+  sourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VerificationItem {
+  itemId: string;
+  questionId: string;
+  question: string;
+  method: string;
+  criteria: string;
+  status: VerificationItemStatus;
+  noteId: string | null;
+  sourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VerificationResult {
+  resultId: string;
+  itemId: string;
+  observation: string;
+  basis: string;
+  verifiedOn: string;
+  conclusion: VerificationConclusion;
+  createdAt: string;
+}
+
+export interface ResearchRecordState {
+  notes: ResearchNote[];
+  items: VerificationItem[];
+  results: VerificationResult[];
+}
+
+export interface QuestionResearch {
+  sources: ResearchSource[];
+  notes: ResearchNote[];
+  items: VerificationItem[];
+  results: VerificationResult[];
+}
+
+export interface SaveResearchNoteInput {
+  noteId?: string;
+  questionId: string;
+  body: string;
+  sourceIds?: string[];
+  now: string;
+}
+
+export interface SaveVerificationItemInput {
+  itemId?: string;
+  questionId: string;
+  question: string;
+  method: string;
+  criteria: string;
+  status?: VerificationItemStatus;
+  noteId?: string | null;
+  sourceIds?: string[];
+  now: string;
+}
+
+export interface AppendVerificationResultInput {
+  questionId: string;
+  itemId: string;
+  observation: string;
+  basis: string;
+  verifiedOn: string;
+  conclusion: VerificationConclusion;
+  now: string;
 }
 
 /** 模型四段分析与引用关联（模型产物，不属于不可变规则快照）。 */
@@ -89,6 +178,7 @@ export function defaultStoreState(): StoreState {
     idempotency: {},
     analyses: [],
     jobEvents: [],
+    researchRecords: { notes: [], items: [], results: [] },
   };
 }
 
@@ -173,6 +263,11 @@ export interface DataService {
   getPaperStudy(actor: Actor, projectId: string): Promise<PaperStudy | null>;
   savePaperCandidates(actor: Actor, projectId: string, generation: { model: string; candidates: PaperCandidate[] }): Promise<PaperStudy>;
   acceptPaperCandidate(actor: Actor, input: { projectId: string; candidateId: string; question: string; now: string }): Promise<Question>;
+
+  getQuestionResearch(actor: Actor, questionId: string): Promise<QuestionResearch>;
+  saveResearchNote(actor: Actor, input: SaveResearchNoteInput): Promise<ResearchNote>;
+  saveVerificationItem(actor: Actor, input: SaveVerificationItemInput): Promise<VerificationItem>;
+  appendVerificationResult(actor: Actor, input: AppendVerificationResultInput): Promise<VerificationResult>;
 
   createQuestion(
     actor: Actor,
@@ -289,6 +384,82 @@ function orderedRevisions(draft: StoreState, question: Question): AnalysisRevisi
   return [...chain, ...rest];
 }
 
+function requireQuestion(draft: StoreState, questionId: string): Question {
+  const question = draft.questions.find((item) => item.questionId === questionId);
+  if (!question) throw new NotFoundError(`问题不存在: ${questionId}`);
+  return question;
+}
+
+function researchState(draft: StoreState): ResearchRecordState {
+  return draft.researchRecords ??= { notes: [], items: [], results: [] };
+}
+
+function questionResearchSources(draft: StoreState, questionId: string): ResearchSource[] {
+  const sources: ResearchSource[] = [];
+  for (const study of draft.paperStudies ?? []) {
+    for (const candidate of study.generation?.candidates ?? []) {
+      if (candidate.questionId !== questionId) continue;
+      candidate.citations.forEach((citation, index) => {
+        sources.push({
+          sourceId: `${candidate.id}:${index + 1}`,
+          title: study.title,
+          filename: study.filename,
+          paperSha256: study.sha256,
+          page: citation.page,
+          quote: citation.quote,
+        });
+      });
+    }
+  }
+  return sources;
+}
+
+function requiredResearchText(value: string, label: string, max: number): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) throw new StorageError("invalid_research_record", `${label}不能为空`);
+  if (text.length > max) throw new StorageError("invalid_research_record", `${label}不能超过 ${max} 字符`);
+  return text;
+}
+
+function researchSourceIds(value: string[] | undefined, sources: ResearchSource[]): string[] {
+  const input = value ?? [];
+  if (!Array.isArray(input) || input.some((id) => typeof id !== "string" || !id)) {
+    throw new StorageError("invalid_research_record", "引文来源格式无效");
+  }
+  const ids = [...new Set(input)];
+  const known = new Set(sources.map((source) => source.sourceId));
+  const foreign = ids.find((id) => !known.has(id));
+  if (foreign) {
+    throw new StorageError("invalid_source", `引文来源不属于当前问题或项目，不能关联: ${foreign}`);
+  }
+  return ids;
+}
+
+function verificationDate(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new StorageError("invalid_research_record", "验证日期必须使用 YYYY-MM-DD 格式");
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new StorageError("invalid_research_record", "验证日期不是有效日历日期");
+  }
+  return value;
+}
+
+function verificationItemStatus(value: VerificationItemStatus): VerificationItemStatus {
+  if (value !== "pending" && value !== "in_progress" && value !== "recorded") {
+    throw new StorageError("invalid_research_record", "待验证事项状态无效");
+  }
+  return value;
+}
+
+function verificationConclusion(value: VerificationConclusion): VerificationConclusion {
+  if (value !== "supported" && value !== "not_supported" && value !== "insufficient") {
+    throw new StorageError("invalid_research_record", "验证结论无效");
+  }
+  return value;
+}
+
 export function createDataService(backend: StorageBackend): DataService {
   return {
     async createProject(actor, name, now, projectId) {
@@ -354,6 +525,126 @@ export function createDataService(backend: StorageBackend): DataService {
       });
     },
 
+    async getQuestionResearch(actor, questionId) {
+      const state = await backend.read(actor);
+      requireQuestion(state, questionId);
+      const records = state.researchRecords ?? { notes: [], items: [], results: [] };
+      const items = records.items.filter((item) => item.questionId === questionId);
+      const itemIds = new Set(items.map((item) => item.itemId));
+      return clone({
+        sources: questionResearchSources(state, questionId),
+        notes: records.notes
+          .filter((note) => note.questionId === questionId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        items: items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        results: records.results.filter((result) => itemIds.has(result.itemId)),
+      });
+    },
+
+    async saveResearchNote(actor, input) {
+      const body = requiredResearchText(input.body, "笔记正文", 10_000);
+      return backend.transact(actor, (draft) => {
+        const question = requireQuestion(draft, input.questionId);
+        const records = researchState(draft);
+        const sourceIds = researchSourceIds(input.sourceIds, questionResearchSources(draft, question.questionId));
+        let note: ResearchNote;
+        if (input.noteId) {
+          const existing = records.notes.find((item) => item.noteId === input.noteId);
+          if (!existing || existing.questionId !== question.questionId) throw new NotFoundError("阅读笔记不存在");
+          existing.body = body;
+          existing.sourceIds = sourceIds;
+          existing.updatedAt = input.now;
+          note = existing;
+        } else {
+          note = {
+            noteId: crypto.randomUUID(),
+            questionId: question.questionId,
+            body,
+            sourceIds,
+            createdAt: input.now,
+            updatedAt: input.now,
+          };
+          records.notes.push(note);
+        }
+        touch(requireProject(draft, question.projectId), input.now);
+        return clone(note);
+      });
+    },
+
+    async saveVerificationItem(actor, input) {
+      const questionText = requiredResearchText(input.question, "待验证问句", 500);
+      const method = requiredResearchText(input.method, "验证方法", 2_000);
+      const criteria = requiredResearchText(input.criteria, "判断依据", 2_000);
+      const status = verificationItemStatus(input.status ?? "pending");
+      return backend.transact(actor, (draft) => {
+        const question = requireQuestion(draft, input.questionId);
+        const records = researchState(draft);
+        let item: VerificationItem;
+        if (input.itemId) {
+          const existing = records.items.find((entry) => entry.itemId === input.itemId);
+          if (!existing || existing.questionId !== question.questionId) throw new NotFoundError("待验证事项不存在");
+          existing.question = questionText;
+          existing.method = method;
+          existing.criteria = criteria;
+          existing.status = status;
+          existing.updatedAt = input.now;
+          item = existing;
+        } else {
+          let noteId: string | null = input.noteId || null;
+          let sourceIds: string[];
+          if (noteId) {
+            const note = records.notes.find((entry) => entry.noteId === noteId);
+            if (!note || note.questionId !== question.questionId) throw new NotFoundError("来源笔记不存在");
+            sourceIds = [...note.sourceIds];
+          } else {
+            sourceIds = researchSourceIds(input.sourceIds, questionResearchSources(draft, question.questionId));
+          }
+          item = {
+            itemId: crypto.randomUUID(),
+            questionId: question.questionId,
+            question: questionText,
+            method,
+            criteria,
+            status,
+            noteId,
+            sourceIds,
+            createdAt: input.now,
+            updatedAt: input.now,
+          };
+          records.items.push(item);
+        }
+        touch(requireProject(draft, question.projectId), input.now);
+        return clone(item);
+      });
+    },
+
+    async appendVerificationResult(actor, input) {
+      const observation = requiredResearchText(input.observation, "实际观察", 5_000);
+      const basis = requiredResearchText(input.basis, "验证依据", 5_000);
+      const verifiedOn = verificationDate(input.verifiedOn);
+      const conclusion = verificationConclusion(input.conclusion);
+      return backend.transact(actor, (draft) => {
+        const question = requireQuestion(draft, input.questionId);
+        const records = researchState(draft);
+        const item = records.items.find((entry) => entry.itemId === input.itemId);
+        if (!item || item.questionId !== question.questionId) throw new NotFoundError("待验证事项不存在");
+        const result: VerificationResult = {
+          resultId: crypto.randomUUID(),
+          itemId: item.itemId,
+          observation,
+          basis,
+          verifiedOn,
+          conclusion,
+          createdAt: input.now,
+        };
+        records.results.push(result);
+        item.status = "recorded";
+        item.updatedAt = input.now;
+        touch(requireProject(draft, question.projectId), input.now);
+        return clone(result);
+      });
+    },
+
     async ensureDemoProject(actor, now) {
       return backend.transact(actor, (draft) => {
         const existing = draft.projects.find((p) => p.projectId === DEMO_PROJECT_ID);
@@ -404,6 +695,9 @@ export function createDataService(backend: StorageBackend): DataService {
         const jobIds = new Set(
           draft.jobs.filter((j) => questionIds.has(j.questionId)).map((j) => j.jobId),
         );
+        const itemIds = new Set(
+          draft.researchRecords?.items.filter((item) => questionIds.has(item.questionId)).map((item) => item.itemId) ?? [],
+        );
         draft.projects = draft.projects.filter((p) => p.projectId !== projectId);
         if (draft.paperStudies) draft.paperStudies = draft.paperStudies.filter((study) => study.projectId !== projectId);
         draft.questions = draft.questions.filter((q) => !questionIds.has(q.questionId));
@@ -412,6 +706,11 @@ export function createDataService(backend: StorageBackend): DataService {
         draft.jobs = draft.jobs.filter((j) => !questionIds.has(j.questionId));
         draft.analyses = draft.analyses.filter((a) => !questionIds.has(a.questionId));
         draft.jobEvents = draft.jobEvents.filter((e) => !jobIds.has(e.jobId));
+        if (draft.researchRecords) {
+          draft.researchRecords.notes = draft.researchRecords.notes.filter((note) => !questionIds.has(note.questionId));
+          draft.researchRecords.items = draft.researchRecords.items.filter((item) => !questionIds.has(item.questionId));
+          draft.researchRecords.results = draft.researchRecords.results.filter((result) => !itemIds.has(result.itemId));
+        }
         for (const key of Object.keys(draft.idempotency)) {
           for (const questionId of questionIds) {
             if (key.startsWith(`${questionId}:`)) {

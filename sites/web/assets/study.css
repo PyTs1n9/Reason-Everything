@@ -2218,3 +2218,381 @@ select:focus-visible,
     background: #1f3a3c;
   }
 }
+
+/* ---------- 问题研究记录 ---------- */
+
+.research-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.research-heading,
+.research-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.research-heading h2,
+.research-column > h3 {
+  margin: 0;
+}
+
+.research-column > h3 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 20px;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+.research-actions,
+.research-trace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.research-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.research-column,
+.research-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.research-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+
+.research-card:focus-visible,
+.research-result:focus-visible {
+  outline-offset: 3px;
+}
+
+.research-card-head .aux,
+.research-facts dd {
+  margin: 0;
+}
+
+.research-note-body,
+.research-question {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.research-note-body {
+  font-family: Georgia, "Songti SC", "SimSun", serif;
+  line-height: 1.85;
+}
+
+.research-question {
+  font-size: 16px;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
+.research-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.research-facts dt {
+  color: var(--meta-ink);
+}
+
+.research-facts dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.research-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--tag-bg);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+}
+
+.research-badge--supported,
+.research-badge--recorded {
+  background: var(--measured-bg);
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--line));
+  color: var(--brand);
+}
+
+.research-badge--not_supported {
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  color: var(--danger);
+}
+
+.research-badge--insufficient,
+.research-badge--in_progress {
+  background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--amber) 35%, var(--line));
+  color: var(--amber);
+}
+
+.research-sources {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.research-sources li {
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+
+.research-sources a {
+  color: var(--brand);
+  font-size: 12px;
+  line-height: 18px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.research-sources a:hover {
+  text-decoration: underline;
+}
+
+.research-sources blockquote {
+  margin: 4px 0 0;
+  font-family: Georgia, "Songti SC", "SimSun", serif;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.research-results {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0 0 0 12px;
+  border-left: 1px solid var(--line);
+}
+
+.research-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--tag-bg);
+  overflow-wrap: anywhere;
+}
+
+.research-result p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.research-empty {
+  margin: 0;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--meta-ink);
+}
+
+.research-origin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 4px;
+  background: var(--tag-bg);
+}
+
+.research-origin p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.modal--research {
+  width: min(720px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.research-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.research-form h2 {
+  margin: 0;
+}
+
+.research-modal-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.research-source-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.research-source-picker legend {
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--meta-ink);
+}
+
+.research-source-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.research-source-option:hover {
+  background: var(--tag-bg);
+}
+
+.research-source-option input {
+  flex: none;
+  margin-top: 4px;
+  accent-color: var(--brand);
+}
+
+.research-source-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.research-source-option strong {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.research-source-quote {
+  font-family: Georgia, "Songti SC", "SimSun", serif;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--meta-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.research-form .modal-actions {
+  position: sticky;
+  bottom: -24px;
+  margin: 0 -24px -24px;
+  padding: 12px 24px 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.research-form .field-error[hidden] {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .research-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .research-heading,
+  .research-card-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .research-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .research-facts dd {
+    margin-bottom: 8px;
+  }
+
+  .modal-overlay {
+    padding: 8px;
+  }
+
+  .modal--research {
+    max-height: calc(100dvh - 16px);
+    padding: 18px;
+  }
+
+  .research-form .modal-actions {
+    bottom: -18px;
+    margin: 0 -18px -18px;
+    padding: 12px 18px 18px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .modal-overlay {
+    backdrop-filter: none;
+  }
+}

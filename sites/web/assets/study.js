@@ -2241,6 +2241,359 @@ function cellKeyOf(lr, augmentation) {
   return `${lr}|${augmentation}`;
 }
 
+// ---------- 视图 4：问题详情与研究记录（卡 23） ----------
+
+const RESEARCH_ITEM_STATUS = {
+  pending: "待验证",
+  in_progress: "进行中",
+  recorded: "已记录结果",
+};
+const RESEARCH_CONCLUSION = {
+  supported: "支持",
+  not_supported: "不支持",
+  insufficient: "证据不足",
+};
+
+function researchBadge(text, kind) {
+  return h("span", { class: `research-badge research-badge--${kind}`, text });
+}
+
+function renderResearchSources(question, sources, sourceIds) {
+  const selected = sourceIds.map((sourceId) => sources.find((source) => source.sourceId === sourceId)).filter(Boolean);
+  if (selected.length === 0) return null;
+  return h("ul", { class: "research-sources" },
+    selected.map((source) => h("li", {},
+      h("a", { href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `${source.title} · PDF 第 ${source.page} 页` }),
+      h("blockquote", { text: source.quote }),
+    )),
+  );
+}
+
+function focusResearchTarget(kind, id) {
+  const node = document.getElementById(`research-${kind}-${id}`);
+  if (!node) return;
+  node.scrollIntoView({ block: "center" });
+  node.focus({ preventScroll: true });
+}
+
+function researchSourceOptions(sources, selectedIds) {
+  if (sources.length === 0) {
+    return h("p", { class: "aux", text: "当前问题没有可关联的引文；可先记录个人思考，之后再编辑补充。" });
+  }
+  const options = sources.map((source) => h("label", { class: "research-source-option" },
+    h("input", { type: "checkbox", name: "researchSource", value: source.sourceId, checked: selectedIds.includes(source.sourceId) }),
+    h("span", {},
+      h("strong", { text: `${source.title} · PDF 第 ${source.page} 页` }),
+      h("span", { class: "research-source-quote", text: source.quote }),
+    ),
+  ));
+  return h("fieldset", { class: "research-source-picker" },
+    h("legend", { text: "关联问题已有引文（可多选，也可不选）" }),
+    options,
+  );
+}
+
+function selectedSourceIds(form) {
+  return [...form.querySelectorAll('input[name="researchSource"]:checked')].map((input) => input.value);
+}
+
+function openResearchModal({ title, trigger, fields, submitText, onSubmit, onSaved }) {
+  const overlay = h("div", { class: "modal-overlay" });
+  const modal = h("div", {
+    class: "modal modal--research",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "researchModalTitle",
+    tabindex: "-1",
+  });
+  const form = h("form", { class: "research-form" },
+    h("h2", { id: "researchModalTitle", text: title }),
+    h("div", { class: "research-modal-fields" }, fields),
+    h("p", { class: "field-error", role: "alert", hidden: true }),
+    h("div", { class: "modal-actions" },
+      h("button", { class: "btn", type: "button", text: "取消" }),
+      h("button", { class: "btn btn-primary", type: "submit", text: submitText }),
+    ),
+  );
+  const error = form.querySelector(".field-error");
+  const cancel = form.querySelector('button[type="button"]');
+  const submit = form.querySelector('button[type="submit"]');
+  let closed = false;
+  const close = (restoreFocus = true) => {
+    if (closed) return;
+    closed = true;
+    overlay.remove();
+    if (restoreFocus && trigger?.isConnected) trigger.focus();
+  };
+  cancel.addEventListener("click", () => close());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    error.hidden = true;
+    try {
+      const saved = await onSubmit();
+      close(false);
+      await onSaved(saved);
+    } catch (saveError) {
+      error.hidden = false;
+      error.textContent = saveError && saveError.message ? saveError.message : String(saveError);
+      submit.disabled = false;
+    }
+  });
+  attachModalBehavior(overlay, modal, close);
+  modal.append(form);
+  (form.querySelector("textarea, input, select") ?? modal).focus();
+}
+
+function openResearchNoteModal(question, research, note, trigger, refresh) {
+  const body = h("textarea", {
+    id: "researchNoteBody",
+    rows: 7,
+    maxlength: 10_000,
+    required: true,
+    placeholder: "记录阅读观察、个人思考或待核对的条件…",
+  });
+  body.value = note?.body ?? "";
+  const sourcePicker = researchSourceOptions(research.sources, note?.sourceIds ?? []);
+  openResearchModal({
+    title: note ? "编辑阅读笔记" : "新建阅读笔记",
+    trigger,
+    fields: [
+      h("div", { class: "field" }, h("label", { for: body.id, text: "笔记正文" }), body),
+      sourcePicker,
+    ],
+    submitText: "保存笔记",
+    onSubmit: async () => {
+      const sourceIds = selectedSourceIds(sourcePicker);
+      return note
+        ? data.saveResearchNote(ACTOR, { noteId: note.noteId, questionId: question.questionId, body: body.value, sourceIds, now: new Date().toISOString() })
+        : data.saveResearchNote(ACTOR, { questionId: question.questionId, body: body.value, sourceIds, now: new Date().toISOString() });
+    },
+    onSaved: async (saved) => {
+      await refresh();
+      toast(note ? "阅读笔记已更新" : "阅读笔记已保存", "ok");
+      focusResearchTarget("note", saved.noteId);
+    },
+  });
+}
+
+function openResearchItemModal(question, research, item, fromNote, trigger, refresh) {
+  const questionInput = h("textarea", { id: "researchItemQuestion", rows: 2, maxlength: 500, required: true });
+  questionInput.value = item?.question ?? fromNote?.body.slice(0, 500) ?? "";
+  const method = h("textarea", { id: "researchItemMethod", rows: 3, maxlength: 2_000, required: true });
+  method.value = item?.method ?? "";
+  const criteria = h("textarea", { id: "researchItemCriteria", rows: 3, maxlength: 2_000, required: true });
+  criteria.value = item?.criteria ?? "";
+  const status = h("select", { id: "researchItemStatus", "aria-label": "事项状态" },
+    Object.entries(RESEARCH_ITEM_STATUS).map(([value, text]) => h("option", { value, text })),
+  );
+  status.value = item?.status ?? "pending";
+  const originNote = fromNote ?? research.notes.find((note) => note.noteId === item?.noteId) ?? null;
+  const fields = [
+    h("div", { class: "field" }, h("label", { for: questionInput.id, text: "待验证问句" }), questionInput),
+    h("div", { class: "field" }, h("label", { for: method.id, text: "验证方法" }), method),
+    h("div", { class: "field" }, h("label", { for: criteria.id, text: "判断依据" }), criteria),
+    h("div", { class: "field" }, h("label", { for: status.id, text: "事项状态" }), status),
+  ];
+  if (originNote) {
+    fields.push(h("div", { class: "research-origin" },
+      h("strong", { text: "来源笔记" }),
+      h("p", { text: originNote.body }),
+      renderResearchSources(question, research.sources, originNote.sourceIds),
+    ));
+  }
+  openResearchModal({
+    title: item ? "编辑待验证事项" : fromNote ? "将笔记转为待验证事项" : "新建待验证事项",
+    trigger,
+    fields,
+    submitText: "保存事项",
+    onSubmit: async () => data.saveVerificationItem(ACTOR, {
+      itemId: item?.itemId,
+      questionId: question.questionId,
+      noteId: !item && fromNote ? fromNote.noteId : undefined,
+      question: questionInput.value,
+      method: method.value,
+      criteria: criteria.value,
+      status: status.value,
+      now: new Date().toISOString(),
+    }),
+    onSaved: async (saved) => {
+      await refresh();
+      toast(item ? "待验证事项已更新" : "待验证事项已保存", "ok");
+      focusResearchTarget("item", saved.itemId);
+    },
+  });
+}
+
+function openVerificationResultModal(question, item, trigger, refresh) {
+  const date = h("input", { type: "date", id: "researchResultDate", required: true });
+  date.value = new Date().toISOString().slice(0, 10);
+  const observation = h("textarea", { id: "researchResultObservation", rows: 4, maxlength: 5_000, required: true });
+  const basis = h("textarea", { id: "researchResultBasis", rows: 4, maxlength: 5_000, required: true });
+  const conclusion = h("select", { id: "researchResultConclusion", required: true },
+    h("option", { value: "", text: "请选择结论" }),
+    Object.entries(RESEARCH_CONCLUSION).map(([value, text]) => h("option", { value, text })),
+  );
+  openResearchModal({
+    title: "记录验证结果",
+    trigger,
+    fields: [
+      h("div", { class: "form-row" },
+        h("div", { class: "field" }, h("label", { for: date.id, text: "验证日期" }), date),
+        h("div", { class: "field" }, h("label", { for: conclusion.id, text: "结论" }), conclusion),
+      ),
+      h("div", { class: "field" }, h("label", { for: observation.id, text: "实际观察" }), observation),
+      h("div", { class: "field" }, h("label", { for: basis.id, text: "验证依据" }), basis),
+      h("p", { class: "aux", text: "每次保存新增一条验证记录，不会覆盖早先结果。" }),
+    ],
+    submitText: "保存验证结果",
+    onSubmit: async () => data.appendVerificationResult(ACTOR, {
+      questionId: question.questionId,
+      itemId: item.itemId,
+      observation: observation.value,
+      basis: basis.value,
+      verifiedOn: date.value,
+      conclusion: conclusion.value,
+      now: new Date().toISOString(),
+    }),
+    onSaved: async (saved) => {
+      await refresh();
+      toast("验证结果已保存", "ok");
+      focusResearchTarget("result", saved.resultId);
+    },
+  });
+}
+
+async function renderResearchWorkspace(question, research) {
+  const panel = h("section", { class: "panel research-panel", id: "researchPanel", "aria-labelledby": "researchTitle" });
+  const notesHost = h("div", { class: "research-list", id: "researchNotes" });
+  const itemsHost = h("div", { class: "research-list", id: "researchItems" });
+  const refresh = async () => {
+    if (!panel.isConnected) return;
+    const latest = await data.getQuestionResearch(ACTOR, question.questionId);
+    if (!panel.isConnected) return;
+    panel.replaceWith(await renderResearchWorkspace(question, latest));
+  };
+
+  const newNote = h("button", { class: "btn btn-primary", type: "button", id: "newResearchNote", text: "新建阅读笔记" });
+  newNote.addEventListener("click", () => openResearchNoteModal(question, research, null, newNote, refresh));
+  const newItem = h("button", { class: "btn", type: "button", id: "newResearchItem", text: "新建待验证事项" });
+  newItem.addEventListener("click", () => openResearchItemModal(question, research, null, null, newItem, refresh));
+
+  panel.append(
+    h("div", { class: "research-heading" },
+      h("div", {},
+        h("h2", { id: "researchTitle", text: "研究记录" }),
+        h("p", { class: "aux", text: `阅读笔记 ${research.notes.length} · 待验证事项 ${research.items.length} · 验证结果 ${research.results.length}` }),
+      ),
+      h("div", { class: "research-actions" }, newNote, newItem),
+    ),
+    h("p", { class: "aux", text: "笔记可关联问题已有引文，也可记录无出处的个人思考；验证结果按保存顺序保留，可逐级追溯。" }),
+    h("div", { class: "research-grid" },
+      h("section", { class: "research-column", "aria-labelledby": "researchNotesTitle" },
+        h("h3", { id: "researchNotesTitle", text: `阅读笔记（${research.notes.length}）` }),
+        notesHost,
+      ),
+      h("section", { class: "research-column", "aria-labelledby": "researchItemsTitle" },
+        h("h3", { id: "researchItemsTitle", text: `待验证事项（${research.items.length}）` }),
+        itemsHost,
+      ),
+    ),
+  );
+
+  if (research.notes.length === 0) {
+    notesHost.append(h("p", { class: "research-empty", text: "还没有阅读笔记。先记下观察、疑问或暂时没有引用的思考。" }));
+  }
+  for (const note of research.notes) {
+    const edit = h("button", { class: "btn", type: "button", text: "编辑" });
+    edit.addEventListener("click", () => openResearchNoteModal(question, research, note, edit, refresh));
+    const convert = h("button", { class: "btn", type: "button", text: "转为事项" });
+    convert.addEventListener("click", () => openResearchItemModal(question, research, null, note, convert, refresh));
+    notesHost.append(h("article", {
+      class: "research-card research-note",
+      id: `research-note-${note.noteId}`,
+      dataset: { noteId: note.noteId },
+      tabindex: "-1",
+    },
+      h("div", { class: "research-card-head" },
+        h("strong", { text: "阅读笔记" }),
+        h("span", { class: "aux", text: `创建 ${formatUpdatedAt(note.createdAt)} · 更新 ${formatUpdatedAt(note.updatedAt)}` }),
+      ),
+      h("p", { class: "research-note-body", text: note.body }),
+      renderResearchSources(question, research.sources, note.sourceIds),
+      h("div", { class: "research-actions" }, edit, convert),
+    ));
+  }
+
+  if (research.items.length === 0) {
+    itemsHost.append(h("p", { class: "research-empty", text: "还没有待验证事项。可手动新建，或从一条阅读笔记转为事项。" }));
+  }
+  for (const item of research.items) {
+    const edit = h("button", { class: "btn", type: "button", text: "编辑事项" });
+    edit.addEventListener("click", () => openResearchItemModal(question, research, item, null, edit, refresh));
+    const addResult = h("button", { class: "btn btn-primary", type: "button", text: "记录验证结果" });
+    addResult.addEventListener("click", () => openVerificationResultModal(question, item, addResult, refresh));
+    const note = research.notes.find((entry) => entry.noteId === item.noteId) ?? null;
+    const results = research.results.filter((result) => result.itemId === item.itemId);
+    const resultList = h("ol", { class: "research-results" });
+    if (results.length === 0) {
+      resultList.append(h("li", { class: "research-empty", text: "尚未记录验证结果。" }));
+    }
+    for (const result of results) {
+      const trace = h("div", { class: "research-trace", "aria-label": "验证结果追溯" },
+        h("button", { class: "btn", type: "button", text: "查看事项", onclick: () => focusResearchTarget("item", item.itemId) }),
+      );
+      if (note) {
+        trace.append(h("button", { class: "btn", type: "button", text: "来源笔记", onclick: () => focusResearchTarget("note", note.noteId) }));
+      }
+      for (const sourceId of item.sourceIds) {
+        const source = research.sources.find((entry) => entry.sourceId === sourceId);
+        if (source) {
+          trace.append(h("a", { class: "btn", href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `原文第 ${source.page} 页` }));
+        }
+      }
+      resultList.append(h("li", {
+        class: `research-result research-result--${result.conclusion}`,
+        id: `research-result-${result.resultId}`,
+        dataset: { resultId: result.resultId },
+        tabindex: "-1",
+      },
+        h("div", { class: "research-card-head" },
+          researchBadge(RESEARCH_CONCLUSION[result.conclusion], result.conclusion),
+          h("span", { class: "aux", text: `验证日期 ${result.verifiedOn} · 记录于 ${formatUpdatedAt(result.createdAt)}` }),
+        ),
+        h("p", {}, h("strong", { text: "实际观察：" }), result.observation),
+        h("p", {}, h("strong", { text: "验证依据：" }), result.basis),
+        trace,
+      ));
+    }
+    const origin = note
+      ? h("button", { class: "name-link", type: "button", text: "来源笔记", onclick: () => focusResearchTarget("note", note.noteId) })
+      : h("span", { class: "aux", text: "手动事项，无来源笔记" });
+    itemsHost.append(h("article", {
+      class: "research-card research-item",
+      id: `research-item-${item.itemId}`,
+      dataset: { itemId: item.itemId },
+      tabindex: "-1",
+    },
+      h("div", { class: "research-card-head" },
+        researchBadge(RESEARCH_ITEM_STATUS[item.status], item.status),
+        h("span", { class: "aux", text: `更新 ${formatUpdatedAt(item.updatedAt)}` }),
+      ),
+      h("h4", { class: "research-question", text: item.question }),
+      h("dl", { class: "research-facts" },
+        h("dt", { text: "验证方法" }), h("dd", { text: item.method }),
+        h("dt", { text: "判断依据" }), h("dd", { text: item.criteria }),
+      ),
+      origin,
+      renderResearchSources(question, research.sources, item.sourceIds),
+      h("div", { class: "research-actions" }, edit, addResult),
+      h("div", {}, h("strong", { text: `验证记录（${results.length}）` }), resultList),
+    ));
+  }
+  return panel;
+}
+
 let renderSeq = 0;
 
 async function renderQuestion(questionId) {
@@ -2254,6 +2607,9 @@ async function renderQuestion(questionId) {
   const candidate = paper?.generation?.candidates.find((item) => item.questionId === questionId);
   if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
   if (candidate) {
+    const research = await data.getQuestionResearch(ACTOR, questionId);
+    if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
+    const researchPanel = await renderResearchWorkspace(question, research);
     closeDrawer(false);
     main.append(
       h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
@@ -2264,8 +2620,13 @@ async function renderQuestion(questionId) {
         renderPaperEvidence(paper, candidate),
       ),
     );
+    main.append(researchPanel);
     return;
   }
+
+  const research = await data.getQuestionResearch(ACTOR, questionId);
+  if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
+  const researchPanel = await renderResearchWorkspace(question, research);
 
   if (qView.questionId !== questionId) {
     closeDrawer(false);
@@ -2393,7 +2754,7 @@ async function renderQuestion(questionId) {
   // —— 问题未明确：主操作是回答澄清，不展示矩阵 ——
   if (!question.confirmedClaim) {
     if (seq !== renderSeq) return;
-    main.append(renderClarifyPanel(question));
+    main.append(renderClarifyPanel(question), researchPanel);
     return;
   }
 
@@ -2432,7 +2793,7 @@ async function renderQuestion(questionId) {
       }),
     );
     if (seq !== renderSeq) return;
-    main.append(startPanel);
+    main.append(startPanel, researchPanel);
     return;
   }
 
@@ -2712,7 +3073,7 @@ async function renderQuestion(questionId) {
   );
 
   if (seq !== renderSeq) return;
-  main.append(layout, versionsPanel);
+  main.append(layout, researchPanel, versionsPanel);
 
   // —— 选择交互（不整页重绘，保留焦点）——
   function applyCellClasses() {
