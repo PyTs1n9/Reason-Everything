@@ -213,3 +213,12 @@
 
 - **实测合计**：`cd sites && npm test` = **165/165 pass、fail 0、exit 0**（161 卡 16 + 本卡 4 例）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL）；`npm run build:web` = exit 0。
 - **未测/受限**：浅色模式胶囊以 CSS 令牌留证（in-app 浏览器 dark 偏好，同卡 15）；问题详情页返回按钮未改（超出本卡指定范围，可下卡补）；真实模型与云存储状态不变（卡 08 起）；`tsc` 未跑（依赖冻结）。**下一卡**：18（或用户指定）。
+
+## 卡 18 · 顶栏「本机保存」存储信息弹层（2026-11-24）
+
+- **用户决策（开工前确认）**：「保存中/已保存」实时状态不做（须 hook 全部写路径，改动面与测试成本大）；其余由本卡自选——把顶栏「本机保存」从静态标签升级为可点的存储信息弹层。
+- **交付**：`src/web/model.ts` 纯新增 `buildSaveModeInfo`（四行如实信息：存储方式「本机保存（IndexedDB）」/数据库名/当前数据量/云端同步「未接入」+ 同步边界说明句；云端状态如实写未接入，不冒充）；`web/index.html` 顶栏 span 改 `button`（`aria-expanded`/`aria-controls`/`role=note` 弹层容器，默认 `hidden`）；`web/assets/study.js` 新增弹层段（点击切换开合、内容异步读 `wf.listProjects` 真实计数、读取失败如实显示「读取失败：…」不吞异常、Escape 关闭且焦点回按钮、点外部关闭（按钮与弹层本体不误关）、`render()` 导航时收起）；`web/assets/study.css` `.save-mode-wrap`/`.save-mode` 胶囊按钮（hover/aria-expanded 变主色）/`.save-mode-pop`（absolute、`right:0`、`width:min(320px, calc(100vw - 32px))` 防越界、`.save-mode-pop[hidden]{display:none}` 显式防 display 覆盖——卡 15/16 同类教训的预防）；`tests/web-savemode.test.ts` 5 例。弹层文案固定四行+说明，**不做「保存中/已保存」写路径状态**（用户明确排除）。
+- **本卡修复的真实缺陷**：无（纯新增行为；原标签如实但无任何交互）。
+- **功能验收（in-app 浏览器，源 127.0.0.1:8331）**：初始弹层 `hidden`+display=none+aria-expanded=false；点按钮展开四行=「存储方式 本机保存（IndexedDB）/数据库 agentflow-study/当前数据 0 个项目 · 0 个研究问题/云端同步 未接入」+说明「数据只保存在当前浏览器，不跨设备同步…」；**计数随真实数据变化**：载入演示项目后=1 个项目 · 0 个研究问题，`createQuestion` 再开=1 个项目 · 1 个研究问题；Escape 关闭且 `activeElement` 回按钮；再开后点外部关闭、aria-expanded=false；载入数据后弹层 320px 宽右对齐、在视口内；320px 窄视口 iframe 实测弹层 288px（=320-32 约束生效）、left≥0、无横向滚动。
+- **实测合计**：`cd sites && npm test` = **170/170 pass、fail 0、exit 0**（165 卡 17 + 本卡 5 例：纯函数两组/HTML 接线/JS 接线/CSS 约束）；`npm run verify:flow` = exit 0（6 PASS/0 FAIL，⑦ 未测单列）；`npm run build:web` = exit 0（改 src 后已重建 gen）。测试断言适配 CRLF 行尾（仓库 checkout 为 CRLF，首跑 1 例因 `\n` 字面量失配，改行尾不敏感后全绿——测试缺陷，非产品缺陷）。
+- **未测/受限**：读取失败路径以文案断言覆盖（浏览器未破坏 IndexedDB 模拟失败）；弹层无 tooltip/hover 态（点击交互足够，未扩大面）；真实模型与云存储状态不变（卡 08 起）；`tsc` 未跑（依赖冻结）。**下一卡**：19（或用户指定）。

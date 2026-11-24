@@ -136,6 +136,42 @@ export function extractPaperTitle(input: { metaTitle?: string; firstPageText?: s
   return line ? line.slice(0, 120) : "";
 }
 
+// ---------- 顶栏保存模式信息（卡 18：「本机保存」点击弹层） ----------
+
+export interface SaveModeInfoRow {
+  label: string;
+  value: string;
+}
+
+export interface SaveModeInfo {
+  rows: SaveModeInfoRow[];
+  note: string;
+}
+
+/**
+ * 顶栏「本机保存」弹层内容：如实说明存储适配器、库名、当前数据量与同步边界。
+ * 当前产品只有 IndexedDB 本机适配器，云端状态如实写「未接入」。
+ */
+export function buildSaveModeInfo(input: {
+  adapterLabel: string;
+  dbName: string;
+  projectCount: number;
+  questionCount: number;
+}): SaveModeInfo {
+  return {
+    rows: [
+      { label: "存储方式", value: `${input.adapterLabel}（IndexedDB）` },
+      { label: "数据库", value: input.dbName },
+      {
+        label: "当前数据",
+        value: `${input.projectCount} 个项目 · ${input.questionCount} 个研究问题`,
+      },
+      { label: "云端同步", value: "未接入" },
+    ],
+    note: "数据只保存在当前浏览器，不跨设备同步；清除浏览器站点数据会丢失全部项目与分析。",
+  };
+}
+
 // ---------- 侧栏树（卡 13：知识库 → 项目文件夹 → 问题文档） ----------
 
 export interface SideTreeQuestion {

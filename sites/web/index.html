@@ -22,7 +22,18 @@
         </button>
         <a class="brand" href="#/">表里有据</a>
       </div>
-      <span class="save-mode" id="saveMode">本机保存</span>
+      <div class="save-mode-wrap">
+        <button
+          type="button"
+          class="save-mode"
+          id="saveMode"
+          aria-expanded="false"
+          aria-controls="saveModePop"
+        >
+          本机保存
+        </button>
+        <div class="save-mode-pop" id="saveModePop" role="note" aria-label="存储信息" hidden></div>
+      </div>
     </header>
 
     <div class="shell">

@@ -87,11 +87,71 @@ body {
   white-space: nowrap;
 }
 
+.save-mode-wrap {
+  position: relative;
+}
+
 .save-mode {
+  font-family: inherit;
   font-size: 13px;
   line-height: 20px;
   color: var(--ink-2);
   white-space: nowrap;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.save-mode:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.save-mode[aria-expanded="true"] {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.save-mode-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px var(--shadow);
+}
+
+.save-mode-pop[hidden] {
+  display: none;
+}
+
+.save-mode-pop dl {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.save-mode-pop dt {
+  color: var(--ink-2);
+}
+
+.save-mode-pop dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.save-pop-note {
+  margin: 10px 0 0;
 }
 
 .nav-btn {

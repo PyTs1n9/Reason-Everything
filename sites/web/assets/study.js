@@ -24,6 +24,7 @@ import {
   sortProjects,
   statusGlyph,
   typeColorClass,
+  buildSaveModeInfo,
 } from "./gen/src/web/model.js";
 import { createLiteratureClient } from "./gen/src/web/literature.js";
 
@@ -41,7 +42,64 @@ globalThis.__agentflow = { wfDeps };
 const main = document.getElementById("main");
 const sidebar = document.getElementById("sidebar");
 const navBtn = document.getElementById("navBtn");
-document.getElementById("saveMode").textContent = LOCAL_STORAGE_LABEL;
+// ---------- 顶栏「本机保存」弹层（卡 18） ----------
+
+const saveModeBtn = document.getElementById("saveMode");
+const saveModePop = document.getElementById("saveModePop");
+saveModeBtn.textContent = LOCAL_STORAGE_LABEL;
+
+function closeSaveModePop(restoreFocus = false) {
+  if (saveModePop.hidden) return;
+  saveModePop.hidden = true;
+  saveModeBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) saveModeBtn.focus();
+}
+
+async function openSaveModePop() {
+  saveModePop.hidden = false;
+  saveModeBtn.setAttribute("aria-expanded", "true");
+  clear(saveModePop);
+  saveModePop.append(h("p", { class: "aux", text: "读取中…" }));
+  try {
+    const projects = await wf.listProjects(ACTOR);
+    const questionCount = projects.reduce((sum, project) => sum + project.questionCount, 0);
+    const info = buildSaveModeInfo({
+      adapterLabel: LOCAL_STORAGE_LABEL,
+      dbName: DB_NAME,
+      projectCount: projects.length,
+      questionCount,
+    });
+    if (saveModePop.hidden) return;
+    clear(saveModePop);
+    const facts = h("dl");
+    for (const row of info.rows) facts.append(h("dt", { text: row.label }), h("dd", { text: row.value }));
+    saveModePop.append(facts, h("p", { class: "aux save-pop-note", text: info.note }));
+  } catch (error) {
+    if (saveModePop.hidden) return;
+    clear(saveModePop);
+    saveModePop.append(
+      h("p", { class: "field-error", text: `读取失败：${error && error.message ? error.message : String(error)}` }),
+    );
+  }
+}
+
+saveModeBtn.addEventListener("click", () => {
+  if (saveModePop.hidden) void openSaveModePop();
+  else closeSaveModePop();
+});
+
+document.addEventListener("click", (event) => {
+  if (saveModePop.hidden) return;
+  if (saveModeBtn.contains(event.target) || saveModePop.contains(event.target)) return;
+  closeSaveModePop();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !saveModePop.hidden) {
+    event.preventDefault();
+    closeSaveModePop(true);
+  }
+});
 
 // ---------- 小工具 ----------
 
@@ -238,6 +296,7 @@ let currentProjectId = null;
 async function render() {
   const route = parseRoute();
   closeNav();
+  closeSaveModePop();
   clear(main);
   try {
     if (route.view === "projects") await renderProjects();
