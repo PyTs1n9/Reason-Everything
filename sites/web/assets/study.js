@@ -1869,65 +1869,98 @@ async function renderProject(projectId, page) {
   const legacy = paper ? null : readLegacyPaperImport(projectId);
   if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId || parseRoute().page !== page) return;
 
-  const nameHost = h("span", { id: "projectTitle", text: project.name });
+  const titleInput = h("input", {
+    type: "text",
+    id: "projectTitleInput",
+    class: "project-title-input",
+    value: project.name,
+    autocomplete: "off",
+    "aria-label": "项目名称",
+    "aria-describedby": "projectTitleError",
+    title: "点击修改项目名；Enter 保存，Esc 取消",
+  });
+  const titleError = h("span", { class: "field-error project-title-error", id: "projectTitleError", role: "alert", hidden: true });
+  const title = h("h1", {},
+    titleInput,
+    paper ? h("span", { class: "project-paper-title-meta", text: `${paper.title} · ${paper.filename} · ${paper.pages.length} 页` }) : null,
+    titleError,
+  );
   const head = h("div", { class: "page-head" },
     h("div", { class: "field", style: "gap:6px" },
-      h("h1", {}, nameHost),
+      title,
     ),
     h("div", { class: "empty-actions" },
-      h("button", { class: "btn", type: "button", id: "renameProjectBtn", text: "改名" }),
       h("button", { class: "btn btn-primary", type: "button", id: "newQuestionBtn", text: "新建研究问题" }),
     ),
   );
 
-  const renameRow = h("div", { class: "toolbar", hidden: true, id: "renameRow" },
-    h("div", { class: "field search-field" },
-      h("label", { for: "renameInput", text: "新的项目名" }),
-      h("input", { type: "text", id: "renameInput", value: project.name, autocomplete: "off" }),
-      h("p", { class: "field-error", id: "renameRowError", role: "alert", hidden: true }),
-    ),
-    h("div", { class: "empty-actions" },
-      h("button", { class: "btn btn-primary", type: "button", id: "renameConfirm", text: "保存" }),
-      h("button", { class: "btn", type: "button", id: "renameCancel", text: "取消" }),
-    ),
-  );
-
   const listHost = h("div", { id: "questionListHost" });
-  main.append(head, renameRow, listHost);
+  main.append(head, listHost);
   if (paper) listHost.before(renderPaperStudy(paper, page, paperFile), h("h2", { text: "已创建的研究问题" }));
   else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
   if (page > 0 && paper) document.getElementById("paperPage").focus();
 
-  document.getElementById("renameProjectBtn").addEventListener("click", () => {
-    renameRow.hidden = false;
-    const input = document.getElementById("renameInput");
-    input.value = project.name;
-    input.removeAttribute("aria-invalid");
-    document.getElementById("renameRowError").hidden = true;
-    input.focus();
-  });
-  document.getElementById("renameCancel").addEventListener("click", () => {
-    renameRow.hidden = true;
-  });
-  document.getElementById("renameConfirm").addEventListener("click", async () => {
-    const input = document.getElementById("renameInput");
-    const errorNode = document.getElementById("renameRowError");
-    const name = input.value.trim();
-    if (!name) {
-      input.setAttribute("aria-invalid", "true");
-      errorNode.hidden = false;
-      errorNode.textContent = "请填写项目名";
-      input.focus();
+  let currentProjectName = project.name;
+  let savingProjectName = false;
+
+  function clearTitleError() {
+    titleInput.removeAttribute("aria-invalid");
+    titleError.hidden = true;
+    titleError.textContent = "";
+  }
+
+  function showTitleError(message) {
+    titleInput.setAttribute("aria-invalid", "true");
+    titleError.hidden = false;
+    titleError.textContent = message;
+  }
+
+  async function saveProjectName() {
+    if (savingProjectName) return;
+    const name = titleInput.value.trim();
+    if (name === currentProjectName) {
+      titleInput.value = currentProjectName;
+      clearTitleError();
       return;
     }
-    input.removeAttribute("aria-invalid");
-    errorNode.hidden = true;
-    // 改名走数据服务（工作流未封装改名动作，同一存储接口）
-    const updated = await data.renameProject(ACTOR, projectId, name, new Date().toISOString());
-    document.getElementById("projectTitle").textContent = updated.name;
-    renameRow.hidden = true;
-    await render();
+    if (!name) {
+      showTitleError("请填写项目名");
+      return;
+    }
+    clearTitleError();
+    savingProjectName = true;
+    titleInput.readOnly = true;
+    titleInput.setAttribute("aria-busy", "true");
+    try {
+      const updated = await data.renameProject(ACTOR, projectId, name, new Date().toISOString());
+      currentProjectName = updated.name;
+      titleInput.value = currentProjectName;
+      toast(`已重命名为「${currentProjectName}」`, "ok");
+      await render();
+    } catch (error) {
+      titleInput.readOnly = false;
+      titleInput.removeAttribute("aria-busy");
+      showTitleError(`重命名失败：${error && error.message ? error.message : String(error)}`);
+      titleInput.focus();
+    } finally {
+      savingProjectName = false;
+    }
+  }
+
+  titleInput.addEventListener("focus", () => titleInput.select());
+  titleInput.addEventListener("keydown", (event) => {
+    if (event.isComposing || savingProjectName) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void saveProjectName();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      titleInput.value = currentProjectName;
+      clearTitleError();
+      titleInput.blur();
+    }
   });
+  titleInput.addEventListener("blur", () => { void saveProjectName(); });
 
   document.getElementById("newQuestionBtn").addEventListener("click", () => {
     location.hash = `#/new/${projectId}`;
