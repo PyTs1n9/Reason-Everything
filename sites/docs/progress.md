@@ -258,3 +258,10 @@
 - **级联与清理**：浏览器删除自建验收项目，删除前 2 笔记 / 1 事项 / 2 结果 / 1 文献；删除后对应计数全部为 0，无悬空研究问题或结果事项，临时保留项目仍存在，随后临时项目也已清理。
 - **验收命令**：干净交付快照 `node --test tests/research-records.test.ts` exit 0（8/8）；`npm test` exit 0（**195/195 pass**）；`npm run verify:flow` exit 0（全部离线场景通过，真实模型未接通单列）；`npm run build:web` exit 0；根目录 `git diff --check` 与 `git diff --cached --check` exit 0。混合工作区中的前序未提交改动不纳入本卡提交。
 - **未测/受限**：in-app 浏览器视口为 0×0 且不可见，指针点击与可见截图无法完成（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`）；本轮以 DOM 快照、脚本派发真实事件、IndexedDB 读回与页面路由核验，未声称可见布局验收。真实模型与云存储仍未接通；`tsc` 未跑（依赖冻结）。**下一卡**：24（或用户指定）。
+
+## 卡 R · 首页项目卡片操作区常显（2026-11-25）
+
+- **交付**：`web/assets/study.css` 将 `.card-actions` 默认 `opacity` 从 0 改为 1，置顶/重命名/删除三钮不再依赖 hover 或 `hover: none` 才可见；`tests/web-ux.test.ts` 新增回归断言，校验默认常显、无 `opacity: 0` 隐藏规则及三钮接线。未改 JS、业务 schema 或依赖。
+- **浏览器实测（127.0.0.1:8343）**：修复前同环境未悬停时操作区计算样式为 `opacity: 0`，且 `matchMedia('(hover: none)')` 为 false；修复后 390×844 iframe 中为 `opacity: 1`，三钮均 26×26、`elementFromPoint` 命中、位于卡片内，横向溢出为 0。重命名按钮可打开弹窗并聚焦输入框，取消后关闭；验收后已删除本轮载入的演示项目。
+- **验收命令**：`node --test --test-name-pattern="项目卡片操作区" tests/web-ux.test.ts` = 1/1 pass、exit 0；`npm run build:web` = exit 0；`npm run verify:flow` = exit 0；根目录 `git diff --check` = exit 0。`npm test` = **265/269 pass、exit 1**；4 个失败均非本卡范围：`web-paper-compare` 的项目标题旧类名断言、`web-sidebar` 的 `.nav-btn` 旧正则、`web-ux` 的旧模型提示文案与根路径旧条件，未越界修改。
+- **未测/受限**：in-app 浏览器指针视口为 0×0，原生点击/截图不可用，本轮以脚本派发真实 DOM 事件、计算样式与命中测试留证；真实模型与云存储状态不变。**本次没做**：未修上述前序/并发改动导致的旧断言，未提交卡 24 或其他未提交文件，未改站点访问范围。

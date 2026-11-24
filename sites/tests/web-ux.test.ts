@@ -117,6 +117,12 @@ test("CSS：必选徽标与空态提示成对存在，[hidden] 显式收起（�
   assert.match(fieldHidden, /display:\s*none/);
 });
 
+test("项目卡片操作区：置顶、重命名和删除默认常显，不依赖悬停", () => {
+  assert.match(ruleBody(css, ".card-actions {"), /opacity:\s*1/);
+  assert.doesNotMatch(css, /\.card-actions\s*\{[^}]*opacity:\s*0/);
+  assert.ok(js.includes('h("div", { class: "card-actions" }, pinBtn, renameBtn, deleteBtn)'));
+});
+
 test("本地服务：根路径 302 到 /web/index.html（相对资源不再 404）", () => {
   assert.ok(serve.includes('if (path === "/")'));
   assert.ok(serve.includes('res.writeHead(302, { location: "/web/index.html" })'));
