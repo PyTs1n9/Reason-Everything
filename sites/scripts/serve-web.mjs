@@ -5,7 +5,9 @@ import { extname, dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { handlePaperModel } from "../src/web/paper-model-api.mjs";
+import { handlePaperOcr } from "../src/web/paper-ocr-api.mjs";
 import { PAPER_MODEL_PATH } from "../src/web/paper-study.ts";
+import { PAPER_OCR_PATH } from "../src/web/paper-ocr.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url))); // sites/
 const PORT = Number(process.argv[2] || 8318);
@@ -13,6 +15,13 @@ const paperModel = {
   url: process.env.AGENTFLOW_PAPER_MODEL_URL,
   key: process.env.AGENTFLOW_PAPER_MODEL_KEY,
   model: process.env.AGENTFLOW_PAPER_MODEL_ID,
+};
+const paperOcr = {
+  url: process.env.AGENTFLOW_PAPER_OCR_URL,
+  key: process.env.AGENTFLOW_PAPER_OCR_KEY,
+  model: process.env.AGENTFLOW_PAPER_OCR_MODEL,
+  localWindows: process.platform === "win32" && process.env.AGENTFLOW_PAPER_OCR_LOCAL !== "0",
+  scriptPath: join(root, "scripts", "ocr-windows.ps1"),
 };
 
 const MIME = {
@@ -34,6 +43,17 @@ createServer(async (req, res) => {
         ...(req.method === "POST" ? { body: Readable.toWeb(req), duplex: "half" } : {}),
       });
       const response = await handlePaperModel(request, paperModel);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text());
+      return;
+    }
+    if (url.pathname === PAPER_OCR_PATH) {
+      const request = new Request(url, {
+        method: req.method,
+        headers: req.headers,
+        ...(req.method === "POST" ? { body: Readable.toWeb(req), duplex: "half" } : {}),
+      });
+      const response = await handlePaperOcr(request, paperOcr);
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(await response.text());
       return;

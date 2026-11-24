@@ -30,6 +30,14 @@ import {
 } from "./gen/src/web/model.js";
 import { createLiteratureClient } from "./gen/src/web/literature.js";
 import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
+import { locateInRegions, locateInTextItems } from "./gen/src/web/paper-locate.js";
+import {
+  pagesNeedingOcr,
+  paperPageSource,
+  readOcrRequest,
+  requestPaperOcr,
+  toPaperRegions,
+} from "./gen/src/web/paper-ocr.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -802,13 +810,21 @@ function openCreateProjectModal(trigger, options = {}) {
     confirmBtn.disabled = true;
     try {
       const project = options.paper
-        ? await data.importPaper(ACTOR, { name, paper: options.paper, now: new Date().toISOString() })
+        ? await data.importPaper(ACTOR, { name, paper: options.paper, now: new Date().toISOString(), file: options.paperFile })
         : await wf.createProject(ACTOR, name);
       saveProjectType(project.projectId, normalizeProjectType(typeSelect.value));
       if (options.paperMeta) savePaperImport(project.projectId, options.paperMeta);
       closeCreateProjectModal(false);
       location.hash = `#/project/${project.projectId}`;
-      if (autoGenerate?.input.checked) void startPaperGeneration(project.projectId, options.paper);
+      const ocrDone = options.ocrOptIn && options.paperFile
+        ? startPaperOcr(project.projectId, options.paperFile.bytes, pagesNeedingOcr(options.paper), options.paper.sha256)
+        : Promise.resolve();
+      if (autoGenerate?.input.checked) {
+        void ocrDone.then(async () => {
+          const latest = await data.getPaperStudy(ACTOR, project.projectId);
+          if (latest && paperHasReadableText(latest)) await startPaperGeneration(project.projectId, latest);
+        }).catch((error) => toast(`生成失败：${error.message || String(error)}`, "bad"));
+      }
     } catch (createError) {
       confirmBtn.disabled = false;
       error.hidden = false;
@@ -872,10 +888,10 @@ async function importPdfFile(file, trigger, restore = null) {
   try {
     const buffer = await file.arrayBuffer();
     const sha256 = await sha256hex(buffer.slice(0));
-    if (restore && sha256 !== restore.meta.sha256) throw new Error("请选择该项目当时导入的原始 PDF");
+    if (restore?.meta && sha256 !== restore.meta.sha256) throw new Error("请选择该项目当时导入的原始 PDF");
     const pdfjsLib = await loadPdfLib();
     const task = pdfjsLib.getDocument({
-      data: buffer,
+      data: buffer.slice(0),
       cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
       cMapPacked: true,
       standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
@@ -891,12 +907,17 @@ async function importPdfFile(file, trigger, restore = null) {
       await task.destroy();
     }
     const textChars = pages.reduce((sum, text) => sum + Array.from(text).length, 0);
-    if (!textChars) {
-      toast("没有文字层：扫描件需要先 OCR", "bad");
-      return;
-    }
-    const title = restore?.meta.title || extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
-    openImportResultModal({ file, pages, textChars, title, sha256, trigger, restore });
+    const title = restore?.meta?.title || extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
+    const paper = {
+      filename: file.name,
+      pages,
+      sha256,
+      title,
+      pageSources: pages.map((text) => text.trim() ? "text" : "pending"),
+      pageErrors: pages.map(() => ""),
+      pageRegions: pages.map(() => []),
+    };
+    openImportResultModal({ file, bytes: new Uint8Array(buffer), paper, textChars, title, sha256, trigger, restore });
   } catch (error) {
     toast(`解析失败：${error && error.message ? error.message : String(error)}`, "bad");
   } finally {
@@ -904,9 +925,20 @@ async function importPdfFile(file, trigger, restore = null) {
   }
 }
 
+function bindPdfImport(button, restore) {
+  const input = h("input", { type: "file", accept: "application/pdf,.pdf", hidden: true });
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    input.value = "";
+    if (file) void importPdfFile(file, button, restore);
+  });
+  return input;
+}
+
 let importModalState = null;
 
-function openImportResultModal({ file, pages, textChars, title, sha256, trigger, restore }) {
+function openImportResultModal({ file, bytes, paper, textChars, title, sha256, trigger, restore }) {
   closeImportResultModal(false);
   const overlay = h("div", { class: "modal-overlay", id: "importModalOverlay" });
   const modal = h("div", {
@@ -921,13 +953,13 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
   const titleInput = h("input", { type: "text", id: "importPaperTitle", value: title, maxlength: 500, autocomplete: "off" });
   const preview = h("p", {
     class: "import-preview",
-    text: (pages[0] ?? "").slice(0, 600) || "（首页无文本）",
+    text: (paper.pages[0] ?? "").slice(0, 600) || "（首页无文本，可先保存原版后做 OCR）",
   });
 
   const copyBtn = h("button", { class: "btn", type: "button", id: "importCopyText", text: "复制首页文本" });
   copyBtn.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(pages[0] ?? "");
+      await navigator.clipboard.writeText(paper.pages[0] ?? "");
       copyBtn.textContent = "已复制";
     } catch {
       copyBtn.textContent = "复制失败，请手动选取";
@@ -937,6 +969,10 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
     }, 2000);
   });
 
+  const pendingPages = pagesNeedingOcr(paper);
+  const ocrOptIn = h("input", { type: "checkbox", id: "importPaperOcr", disabled: pendingPages.length === 0 });
+  const ocrChoice = h("label", { class: "paper-opt-in", for: ocrOptIn.id }, ocrOptIn,
+    pendingPages.length ? `发送 ${pendingPages.length} 页待识别内容到 OCR 服务（扫描页）` : "所有页面已有文字层，无需 OCR");
   const autoGenerate = restore ? paperGenerationChoice() : null;
   const error = h("p", { class: "field-error", role: "alert", hidden: true });
   const useBtn = h("button", {
@@ -944,14 +980,23 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
   });
   useBtn.addEventListener("click", async () => {
     const nextName = titleInput.value.trim() || file.name.replace(/\.pdf$/i, "");
-    const paper = { filename: file.name, pages, sha256, title: nextName };
+    const nextPaper = { ...paper, title: nextName };
+    const paperFile = { filename: file.name, sha256, bytes };
     if (restore) {
       useBtn.disabled = true;
       error.hidden = true;
       try {
-        await data.importPaper(ACTOR, { name: nextName, paper, now: new Date().toISOString(), projectId: restore.projectId });
+        await data.importPaper(ACTOR, { name: nextName, paper: nextPaper, now: new Date().toISOString(), projectId: restore.projectId, file: paperFile });
         closeImportResultModal(false);
-        if (autoGenerate.input.checked) void startPaperGeneration(restore.projectId, paper);
+        const ocrDone = ocrOptIn.checked
+          ? startPaperOcr(restore.projectId, bytes, pendingPages, sha256)
+          : Promise.resolve();
+        if (autoGenerate.input.checked) {
+          void ocrDone.then(async () => {
+            const latest = await data.getPaperStudy(ACTOR, restore.projectId);
+            if (latest && paperHasReadableText(latest)) await startPaperGeneration(restore.projectId, latest);
+          }).catch((saveError) => toast(`生成失败：${saveError.message || String(saveError)}`, "bad"));
+        }
         if (parseRoute().projectId === restore.projectId) await render();
       } catch (saveError) {
         error.hidden = false;
@@ -961,7 +1006,7 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
       return;
     }
     closeImportResultModal(false);
-    openCreateProjectModal(trigger, { prefillName: nextName, paper });
+    openCreateProjectModal(trigger, { prefillName: nextName, paper: nextPaper, paperFile, ocrOptIn: ocrOptIn.checked });
   });
   const closeBtn = h("button", { class: "btn", type: "button", id: "importClose", text: "关闭" });
   closeBtn.addEventListener("click", () => closeImportResultModal());
@@ -972,7 +1017,9 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
       h("dt", { text: "文件" }),
       h("dd", { text: file.name }),
       h("dt", { text: "页数" }),
-      h("dd", { text: String(pages.length) }),
+      h("dd", { text: String(paper.pages.length) }),
+      h("dt", { text: "待 OCR" }),
+      h("dd", { text: pendingPages.length ? `${pendingPages.length} 页` : "0 页" }),
       h("dt", { text: "字符数" }),
       h("dd", { text: String(textChars) }),
       h("dt", { text: "SHA-256" }),
@@ -986,7 +1033,8 @@ function openImportResultModal({ file, pages, textChars, title, sha256, trigger,
       h("span", { class: "aux", text: "首页预览 · 项目会保存各页的可提取文字" }),
       preview,
     ),
-    autoGenerate?.label,
+    ...(autoGenerate ? [autoGenerate.label] : []),
+    ocrChoice,
     error,
     h("div", { class: "modal-actions" }, copyBtn, useBtn, closeBtn),
   );
@@ -1003,6 +1051,234 @@ function closeImportResultModal(restoreFocus = true) {
   current.overlay.remove();
   importModalState = null;
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+}
+
+const paperOcrJobs = new Map();
+
+async function renderPaperPageImage(pdf, pageNumber) {
+  const page = await pdf.getPage(pageNumber);
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(2.5, 1800 / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext("2d", { alpha: false });
+  await page.render({ canvasContext: context, viewport }).promise;
+  return {
+    page: pageNumber,
+    image: canvas.toDataURL("image/png"),
+    width: canvas.width,
+    height: canvas.height,
+    rotation: page.rotate ?? 0,
+  };
+}
+
+function startPaperOcr(projectId, bytes, pageNumbers, sha256) {
+  const jobKey = `${projectId}:${sha256}`;
+  const existing = paperOcrJobs.get(jobKey);
+  if (existing?.running) return existing.promise;
+  const pages = [...new Set(pageNumbers)].sort((a, b) => a - b);
+  const job = { running: true, current: 0, total: pages.length, text: "正在准备 OCR…", error: "" };
+  const onProject = () => parseRoute().view === "project" && parseRoute().projectId === projectId;
+  const promise = (async () => {
+    if (!pages.length) return;
+    const pdfjsLib = await loadPdfLib();
+    const task = pdfjsLib.getDocument({
+      data: bytes.slice(),
+      cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
+      cMapPacked: true,
+      standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
+    });
+    try {
+      const pdf = await task.promise;
+      for (const page of pages) {
+        job.current = page;
+        job.text = `正在识别第 ${page} 页…`;
+        if (onProject()) await render();
+        try {
+          const image = await renderPaperPageImage(pdf, page);
+          const result = await requestPaperOcr(readOcrRequest(image));
+          await data.updatePaperPageOcr(ACTOR, {
+            projectId,
+            sha256,
+            now: new Date().toISOString(),
+            update: { page, ok: true, text: result.text, regions: toPaperRegions(result) },
+          });
+        } catch (error) {
+          await data.updatePaperPageOcr(ACTOR, {
+            projectId,
+            sha256,
+            now: new Date().toISOString(),
+            update: { page, ok: false, error: error.message || String(error) },
+          });
+        }
+        if (onProject()) await render();
+      }
+      job.text = `OCR 完成：已处理 ${pages.length} 页`;
+    } finally {
+      await task.destroy();
+    }
+  })().catch((error) => {
+    job.error = error.message || String(error);
+    job.text = job.error;
+  }).finally(() => {
+    job.running = false;
+    if (onProject()) void render();
+  });
+  job.promise = promise;
+  paperOcrJobs.set(jobKey, job);
+  return promise;
+}
+
+let pdfViewerState = null;
+
+function closePdfViewer(restoreFocus = true) {
+  const current = pdfViewerState;
+  if (!current) return;
+  current.closed = true;
+  current.seq += 1;
+  if (current.task) void current.task.destroy();
+  current.overlay.remove();
+  pdfViewerState = null;
+  if (restoreFocus && current.trigger?.isConnected) current.trigger.focus();
+}
+
+async function openPdfViewer(paper, file, pageNumber, quote = null, trigger = null) {
+  if (!file) {
+    toast("请先补传原 PDF，才能查看原版页面", "bad");
+    return false;
+  }
+  closePdfViewer(false);
+  const overlay = h("div", { class: "modal-overlay pdf-overlay", id: "pdfViewerOverlay" });
+  const modal = h("div", {
+    class: "modal modal--pdf",
+    id: "pdfViewer",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "pdfViewerTitle",
+    tabindex: "-1",
+  });
+  const title = h("h2", { id: "pdfViewerTitle", text: paper.title || paper.filename });
+  const precision = h("p", { class: "pdf-precision", id: "pdfPrecision", role: "status", text: "正在打开原版页面…" });
+  const prev = h("button", { class: "btn", type: "button", id: "pdfPrev", text: "上一页" });
+  const next = h("button", { class: "btn", type: "button", id: "pdfNext", text: "下一页" });
+  const zoomOut = h("button", { class: "btn", type: "button", id: "pdfZoomOut", text: "−" });
+  const zoomIn = h("button", { class: "btn", type: "button", id: "pdfZoomIn", text: "+" });
+  const fit = h("button", { class: "btn", type: "button", id: "pdfFit", text: "适合宽度" });
+  const close = h("button", { class: "btn", type: "button", id: "pdfClose", text: "关闭" });
+  const toolbar = h("div", { class: "pdf-toolbar" }, prev, next, zoomOut, zoomIn, fit, close);
+  const stage = h("div", { class: "pdf-stage", id: "pdfStage" });
+  const pageHost = h("div", { class: "pdf-page", id: "pdfPage" });
+  const canvas = h("canvas", { id: "pdfCanvas", "aria-label": "原版 PDF 页面" });
+  const highlights = h("div", { class: "pdf-highlights", id: "pdfHighlights", "aria-hidden": "true" });
+  const quoteBox = h("blockquote", { class: "pdf-quote", hidden: !quote, text: quote ?? "" });
+  pageHost.append(canvas, highlights);
+  stage.append(pageHost);
+  modal.append(
+    h("header", { class: "pdf-head" }, title, precision),
+    toolbar,
+    stage,
+    quoteBox,
+  );
+  attachModalBehavior(overlay, modal, () => closePdfViewer());
+  const state = {
+    overlay,
+    trigger,
+    task: null,
+    pdf: null,
+    page: Math.min(paper.pages.length, Math.max(1, pageNumber)),
+    quote,
+    zoom: null,
+    seq: 0,
+    closed: false,
+  };
+  pdfViewerState = state;
+  close.addEventListener("click", () => closePdfViewer());
+  close.focus();
+
+  const draw = async () => {
+    if (!state.pdf || state.closed) return;
+    const seq = ++state.seq;
+    const page = await state.pdf.getPage(state.page);
+    const base = page.getViewport({ scale: 1 });
+    if (state.zoom === null) state.zoom = Math.min(2.5, Math.max(0.5, (stage.clientWidth - 48) / base.width));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const viewport = page.getViewport({ scale: state.zoom * dpr });
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    canvas.style.width = `${viewport.width / dpr}px`;
+    canvas.style.height = `${viewport.height / dpr}px`;
+    pageHost.style.width = canvas.style.width;
+    pageHost.style.height = canvas.style.height;
+    clear(highlights);
+    precision.textContent = `第 ${state.page} / ${paper.pages.length} 页 · 正在渲染…`;
+    const render = page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport });
+    await render.promise;
+    if (state.closed || seq !== state.seq) return;
+    let located = null;
+    if (state.quote) {
+      const source = paperPageSource(paper, state.page - 1);
+      if (source === "ocr" && paper.pageRegions?.[state.page - 1]?.length) {
+        located = locateInRegions(paper.pageRegions[state.page - 1], state.quote);
+      } else {
+        const content = await page.getTextContent();
+        if (state.closed || seq !== state.seq) return;
+        located = locateInTextItems(content.items, state.quote, viewport);
+      }
+      for (const rect of located.rects) {
+        highlights.append(h("div", {
+          class: "pdf-highlight",
+          style: `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.width * 100}%;height:${rect.height * 100}%`,
+        }));
+      }
+    }
+    precision.textContent = `第 ${state.page} / ${paper.pages.length} 页${located ? ` · ${located.reason}` : " · 原版页面"}`;
+    prev.disabled = state.page <= 1;
+    next.disabled = state.page >= paper.pages.length;
+  };
+
+  const redraw = () => {
+    void draw().catch((error) => {
+      if (!state.closed) precision.textContent = `原版页面渲染失败：${error.message || String(error)}`;
+    });
+  };
+
+  prev.addEventListener("click", () => {
+    if (state.page > 1) state.page -= 1;
+    redraw();
+  });
+  next.addEventListener("click", () => {
+    if (state.page < paper.pages.length) state.page += 1;
+    redraw();
+  });
+  zoomOut.addEventListener("click", () => {
+    state.zoom = Math.max(0.4, (state.zoom ?? 1) - 0.2);
+    redraw();
+  });
+  zoomIn.addEventListener("click", () => {
+    state.zoom = Math.min(4, (state.zoom ?? 1) + 0.2);
+    redraw();
+  });
+  fit.addEventListener("click", () => {
+    state.zoom = null;
+    redraw();
+  });
+
+  try {
+    const pdfjsLib = await loadPdfLib();
+    state.task = pdfjsLib.getDocument({
+      data: file.bytes.slice(),
+      cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
+      cMapPacked: true,
+      standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
+    });
+    state.pdf = await state.task.promise;
+    if (!state.closed) await draw();
+  } catch (error) {
+    if (!state.closed) precision.textContent = `原版页面打开失败：${error.message || String(error)}`;
+  }
+  return true;
 }
 
 // ---------- 卡片操作：重命名 ----------
@@ -1305,6 +1581,13 @@ function paperGenerationChoice() {
   return { input, label: h("label", { class: "paper-opt-in" }, input, "自动生成研究问题（逐批将论文文字发送给模型服务）") };
 }
 
+function paperHasReadableText(paper) {
+  return paper.pages.some((text, index) => {
+    const source = paper.pageSources?.[index] ?? (text.trim() ? "text" : "pending");
+    return (source === "text" || source === "ocr") && text.trim();
+  });
+}
+
 const paperJobs = new Map();
 
 async function requestPaperModel(input) {
@@ -1330,8 +1613,9 @@ async function startPaperGeneration(projectId, paper) {
   const onProject = () => parseRoute().view === "project" && parseRoute().projectId === projectId;
   try {
     const generate = async () => {
-      if ((await data.getPaperStudy(ACTOR, projectId))?.generation?.candidates.length) return;
-      const generated = await generatePaperCandidates(paper, requestPaperModel, (batch) => {
+      const current = await data.getPaperStudy(ACTOR, projectId);
+      if (current?.generation?.candidates.length) return;
+      const generated = await generatePaperCandidates(current ?? paper, requestPaperModel, (batch) => {
         job.text = `模型正在阅读第 ${batch} 批论文文字…`;
         const status = document.getElementById("paperGenerationStatus");
         if (onProject() && status) status.textContent = job.text;
@@ -1347,13 +1631,21 @@ async function startPaperGeneration(projectId, paper) {
   if (onProject()) await render();
 }
 
-function renderPaperEvidence(paper, candidate) {
-  const evidence = h("ul", { class: "paper-citations" });
-  for (const { page, quote } of candidate.citations) {
-    evidence.append(h("li", {},
-      h("a", { href: `#/project/${paper.projectId}/${page}`, text: `PDF 第 ${page} 页` }),
-      h("blockquote", { text: quote }),
-    ));
+function renderPaperEvidence(paper, candidate, storedFile = null) {
+  const citations = h("ul", { class: "paper-citations" });
+  for (const evidence of candidate.citations) {
+    const sourceLink = h("a", { href: `#/project/${paper.projectId}/${evidence.page}`, text: `PDF 第 ${evidence.page} 页` });
+    sourceLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const file = storedFile ?? await data.getPaperFile(ACTOR, paper.projectId, paper.sha256);
+      if (!file) {
+        toast("请先补传原 PDF，才能查看原版页面", "bad");
+        location.hash = `#/project/${paper.projectId}/${evidence.page}`;
+        return;
+      }
+      await openPdfViewer(paper, file, evidence.page, evidence.quote, sourceLink);
+    });
+    citations.append(h("li", {}, sourceLink, h("blockquote", { text: evidence.quote })));
   }
   return [
     h("dl", { class: "import-facts" },
@@ -1361,15 +1653,97 @@ function renderPaperEvidence(paper, candidate) {
       h("dt", { text: "研究价值" }), h("dd", { text: candidate.rationale }),
       h("dt", { text: "验证方法" }), h("dd", { text: candidate.verification }),
     ),
-    evidence,
+    citations,
   ];
 }
 
-function renderPaperStudy(paper, initialPage) {
+function renderPaperOcrPanel(paper, file) {
+  const needing = pagesNeedingOcr(paper);
+  const counts = { text: 0, ocr: 0, pending: 0, failed: 0 };
+  paper.pages.forEach((_, index) => {
+    counts[paperPageSource(paper, index)] += 1;
+  });
+  const labels = { text: "文字层", ocr: "OCR", pending: "待识别", failed: "识别失败" };
+  const job = paperOcrJobs.get(`${paper.projectId}:${paper.sha256}`);
+  const reupload = h("button", { class: "btn", type: "button", text: "补传原 PDF" });
+  const reuploadInput = bindPdfImport(reupload, { projectId: paper.projectId, meta: { sha256: paper.sha256, title: paper.title } });
+  if (!file) {
+    return h("section", { class: "ocr-panel", "aria-labelledby": "ocrPanelTitle" },
+      h("div", { class: "ocr-panel-head" },
+        h("div", {},
+          h("h3", { id: "ocrPanelTitle", text: "原版与扫描识别" }),
+          h("p", { class: "aux", text: "旧记录未保存 PDF 字节。补传同一原文件后可查看原版页面和精确高亮，已有问题与引文不会丢失。" }),
+        ),
+        h("div", { class: "empty-actions" }, reupload, reuploadInput),
+      ),
+    );
+  }
+  const runAll = h("button", {
+    class: "btn btn-primary",
+    type: "button",
+    disabled: !needing.length || job?.running,
+    text: job?.running ? "识别中…" : `识别全部待识别页（${needing.length}）`,
+  });
+  runAll.addEventListener("click", () => startPaperOcr(paper.projectId, file.bytes, needing, paper.sha256));
+  const rows = h("ul", { class: "ocr-page-list" },
+    ...paper.pages.map((_, index) => {
+      const source = paperPageSource(paper, index);
+      const error = paper.pageErrors?.[index] || "";
+      const retry = h("button", {
+        class: "btn btn-small",
+        type: "button",
+        disabled: source === "text" || source === "ocr" || job?.running,
+        text: source === "failed" ? "重试" : "识别",
+      });
+      retry.addEventListener("click", () => startPaperOcr(paper.projectId, file.bytes, [index + 1], paper.sha256));
+      return h("li", { class: `ocr-page-row is-${source}` },
+        h("span", { class: "ocr-page-no", text: `第 ${index + 1} 页` }),
+        h("span", { class: `status-badge is-${source}`, text: labels[source] }),
+        error
+          ? h("span", { class: "ocr-page-error", text: error })
+          : h("span", { class: "ocr-page-detail", text: source === "text" ? "无需 OCR" : source === "ocr" ? "已保存识别文字与区域" : "尚未取得可用文字" }),
+        retry,
+      );
+    }),
+  );
+  const status = h("p", {
+    class: job?.error ? "field-error" : "aux",
+    role: "status",
+    text: job?.running ? `${job.text}（第 ${job.current} / ${job.total} 页）` : job?.error || job?.text || "仅发送没有可用文字层的页面；单页失败不会影响其他页。",
+  });
+  return h("section", { class: "ocr-panel", "aria-labelledby": "ocrPanelTitle" },
+    h("div", { class: "ocr-panel-head" },
+      h("div", {},
+        h("h3", { id: "ocrPanelTitle", text: "原版与扫描识别" }),
+        h("p", { class: "aux", text: `文字层 ${counts.text} · OCR ${counts.ocr} · 待识别 ${counts.pending} · 失败 ${counts.failed}` }),
+      ),
+      runAll,
+    ),
+    status,
+    h("details", { class: "ocr-details", open: needing.length > 0 },
+      h("summary", { text: "逐页状态与单页重试" }),
+      rows,
+    ),
+    h("div", { class: "empty-actions" }, reupload, reuploadInput),
+  );
+}
+
+function renderPaperStudy(paper, initialPage, file = null) {
+  const statusLabels = { text: "文字层", ocr: "OCR", pending: "待识别", failed: "识别失败" };
+  const readable = paper.pages.filter((text, index) => {
+    const source = paperPageSource(paper, index);
+    return (source === "text" || source === "ocr") && text.trim();
+  }).length;
   const pagePicker = h("select", { "aria-label": "PDF 页码", id: "paperPage" },
-    paper.pages.map((text, index) => h("option", { value: index + 1, text: `第 ${index + 1} 页${text ? "" : " · 无可读文字"}` })),
+    paper.pages.map((text, index) => h("option", {
+      value: index + 1,
+      text: `第 ${index + 1} 页 · ${statusLabels[paperPageSource(paper, index)]}${text.trim() ? "" : " · 无可读文字"}`,
+    })),
   );
   const pageText = h("div", { class: "import-preview paper-page-text", tabindex: "0", "aria-label": "当前页正文" });
+  const originalBtn = file ? h("button", { class: "btn", type: "button", text: "查看原版" }) : null;
+  let currentPage = paper.pages[initialPage - 1] !== undefined ? initialPage : 1;
+  originalBtn?.addEventListener("click", () => openPdfViewer(paper, file, currentPage, null, originalBtn));
   const job = paperJobs.get(paper.projectId);
   const generation = paper.generation;
   const candidates = h("section", { class: "panel paper-candidates", "aria-labelledby": "paperCandidatesTitle" },
@@ -1379,23 +1753,42 @@ function renderPaperStudy(paper, initialPage) {
     h("section", { class: "panel", "aria-labelledby": "paperStudyTitle" },
       h("h2", { id: "paperStudyTitle", text: "项目文献" }),
       h("h3", { text: paper.title }),
-      h("p", { class: "aux", text: `${paper.filename} · ${paper.pages.filter(Boolean).length}/${paper.pages.length} 页有可提取文字` }),
-      h("div", { class: "field", id: "paperReader" }, h("label", { for: "paperPage", text: "查看正文" }), pagePicker, pageText),
+      h("p", { class: "aux", text: `${paper.filename} · ${readable}/${paper.pages.length} 页有可提取文字` }),
+      renderPaperOcrPanel(paper, file),
+      h("div", { class: "field paper-reader-actions", id: "paperReader" },
+        h("label", { for: "paperPage", text: "查看正文" }),
+        pagePicker,
+        originalBtn,
+      ),
+      pageText,
     ),
     candidates,
   );
   const showPage = () => {
-    pageText.textContent = paper.pages[Number(pagePicker.value) - 1] || "该页没有提取到可读文字";
+    currentPage = Number(pagePicker.value);
+    const index = currentPage - 1;
+    const source = paperPageSource(paper, index);
+    const text = paper.pages[index] || "";
+    if (text.trim() && (source === "text" || source === "ocr")) {
+      pageText.textContent = text;
+    } else if (source === "failed") {
+      pageText.textContent = `这一页 OCR 失败：${paper.pageErrors?.[index] || "未取得可用文字"}。可在上方单页重试。`;
+    } else if (source === "pending") {
+      pageText.textContent = "这一页没有可用的文字层，尚未 OCR。可在上方识别本页或全部待识别页。";
+    } else {
+      pageText.textContent = "这一页没有可提取的文字层，可能是扫描页或纯图页。";
+    }
     pageText.scrollTop = 0;
   };
-  pagePicker.value = String(paper.pages[initialPage - 1] !== undefined ? initialPage : 1);
+  pagePicker.value = String(currentPage);
   pagePicker.addEventListener("change", showPage);
   showPage();
 
   if (!generation?.candidates.length) {
-    const message = job?.text ?? (generation ? "模型未找到有可核对证据的研究问题，可重新生成。" : "可将论文文字发送给模型服务，生成带出处的问题草稿。");
+    const hasText = paperHasReadableText(paper);
+    const message = job?.text ?? (generation ? "模型未找到有可核对证据的研究问题，可重新生成。" : hasText ? "可将论文文字发送给模型服务，生成带出处的问题草稿。" : "暂无可用于生成问题的文字，请先完成 OCR。");
     const status = h("p", { id: "paperGenerationStatus", role: "status", class: job && !job.running ? "field-error" : "aux", text: message });
-    const generate = h("button", { class: "btn btn-primary", type: "button", disabled: job?.running, text: job || generation ? "重新生成" : "生成研究问题" });
+    const generate = h("button", { class: "btn btn-primary", type: "button", disabled: job?.running || !hasText, text: job || generation ? "重新生成" : "生成研究问题" });
     generate.addEventListener("click", () => {
       generate.disabled = true;
       status.textContent = "正在准备论文文字…";
@@ -1405,7 +1798,7 @@ function renderPaperStudy(paper, initialPage) {
   } else {
     candidates.append(h("p", { class: "aux", text: `模型 ${generation.model} · 核对页码和原文后，可编辑并确认问题。` }));
     for (const candidate of generation.candidates) {
-      const card = h("article", { class: "paper-candidate" }, h("h3", { text: candidate.question }), renderPaperEvidence(paper, candidate));
+      const card = h("article", { class: "paper-candidate" }, h("h3", { text: candidate.question }), renderPaperEvidence(paper, candidate, file));
       if (candidate.questionId) {
         card.append(h("a", { class: "name-link", href: `#/question/${candidate.questionId}`, text: "打开已确认的问题" }));
       } else {
@@ -1457,6 +1850,7 @@ async function renderProject(projectId, page) {
   const project = await data.getProject(ACTOR, projectId);
   if (!project) throw new Error(`项目不存在: ${projectId}`);
   const paper = await data.getPaperStudy(ACTOR, projectId);
+  const paperFile = paper ? await data.getPaperFile(ACTOR, projectId, paper.sha256) : null;
   const legacy = paper ? null : readLegacyPaperImport(projectId);
   if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId || parseRoute().page !== page) return;
 
@@ -1486,7 +1880,7 @@ async function renderProject(projectId, page) {
 
   const listHost = h("div", { id: "questionListHost" });
   main.append(backLink, head, renameRow, listHost);
-  if (paper) listHost.before(renderPaperStudy(paper, page), h("h2", { text: "已创建的研究问题" }));
+  if (paper) listHost.before(renderPaperStudy(paper, page, paperFile), h("h2", { text: "已创建的研究问题" }));
   else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
   if (page > 0 && paper) document.getElementById("paperPage").focus();
 
@@ -2258,12 +2652,28 @@ function researchBadge(text, kind) {
   return h("span", { class: `research-badge research-badge--${kind}`, text });
 }
 
+function researchSourceLink(question, source, text, className = "") {
+  const link = h("a", { class: className, href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text });
+  link.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const paper = await data.getPaperStudy(ACTOR, question.projectId);
+    const file = paper?.sha256 === source.paperSha256 ? await data.getPaperFile(ACTOR, question.projectId, paper.sha256) : null;
+    if (!paper || paper.sha256 !== source.paperSha256 || !file) {
+      toast("请先补传原 PDF，才能查看原版页面", "bad");
+      location.hash = `#/project/${question.projectId}/${source.page}`;
+      return;
+    }
+    await openPdfViewer(paper, file, source.page, source.quote, link);
+  });
+  return link;
+}
+
 function renderResearchSources(question, sources, sourceIds) {
   const selected = sourceIds.map((sourceId) => sources.find((source) => source.sourceId === sourceId)).filter(Boolean);
   if (selected.length === 0) return null;
   return h("ul", { class: "research-sources" },
     selected.map((source) => h("li", {},
-      h("a", { href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `${source.title} · PDF 第 ${source.page} 页` }),
+      researchSourceLink(question, source, `${source.title} · PDF 第 ${source.page} 页`),
       h("blockquote", { text: source.quote }),
     )),
   );
@@ -2549,7 +2959,7 @@ async function renderResearchWorkspace(question, research) {
       for (const sourceId of item.sourceIds) {
         const source = research.sources.find((entry) => entry.sourceId === sourceId);
         if (source) {
-          trace.append(h("a", { class: "btn", href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `原文第 ${source.page} 页` }));
+          trace.append(researchSourceLink(question, source, `原文第 ${source.page} 页`, "btn"));
         }
       }
       resultList.append(h("li", {
@@ -2604,6 +3014,7 @@ async function renderQuestion(questionId) {
   if (!question) throw new Error(`问题不存在: ${questionId}`);
   const project = await data.getProject(ACTOR, question.projectId);
   const paper = await data.getPaperStudy(ACTOR, question.projectId);
+  const paperFile = paper ? await data.getPaperFile(ACTOR, question.projectId, paper.sha256) : null;
   const candidate = paper?.generation?.candidates.find((item) => item.questionId === questionId);
   if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
   if (candidate) {
@@ -2617,7 +3028,7 @@ async function renderQuestion(questionId) {
       h("section", { class: "panel paper-candidate" },
         h("h2", { text: "研究线索与文献出处" }),
         h("p", { class: "aux", text: `${paper.title} · PDF 物理页码` }),
-        renderPaperEvidence(paper, candidate),
+        renderPaperEvidence(paper, candidate, paperFile),
       ),
     );
     main.append(researchPanel);

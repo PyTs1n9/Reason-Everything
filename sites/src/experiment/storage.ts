@@ -32,7 +32,13 @@ import type { AnalysisModelOutput } from "../agent/adapter.ts";
 import { validateRevision } from "./revision.ts";
 import { buildEvidencePackage, type EvidencePackage } from "./evidence.ts";
 import { runContentKey } from "./import.ts";
-import type { PaperCandidate, PaperSource, PaperStudy } from "../web/paper-study.ts";
+import type {
+  PaperCandidate,
+  PaperPageSource,
+  PaperRegion,
+  PaperSource,
+  PaperStudy,
+} from "../web/paper-study.ts";
 
 export interface Actor {
   /** 服务端验证的访问身份（云端取自 x-qoder-user-context 的 user_id）。 */
@@ -53,9 +59,24 @@ export interface StoreState {
   jobEvents: JobEvent[];
   /** 文献工作区附属记录，旧分区可能没有此键。 */
   paperStudies?: PaperStudy[];
+  /** 原 PDF 字节按项目与文件指纹保存，供刷新后回查原版。 */
+  paperFiles?: PaperFileBytes[];
   /** 问题级研究记录，旧分区可能没有此键；不改变四种冻结业务身份。 */
   researchRecords?: ResearchRecordState;
 }
+
+export interface PaperFileBytes {
+  projectId: string;
+  filename: string;
+  sha256: string;
+  bytes: Uint8Array;
+}
+
+export type PaperFileInput = Omit<PaperFileBytes, "projectId">;
+
+export type PaperOcrPageUpdate =
+  | { page: number; ok: true; text: string; regions: PaperRegion[] }
+  | { page: number; ok: false; error: string };
 
 export type VerificationItemStatus = "pending" | "in_progress" | "recorded";
 export type VerificationConclusion = "supported" | "not_supported" | "insufficient";
@@ -259,7 +280,10 @@ export interface DataService {
   renameProject(actor: Actor, projectId: string, name: string, now: string): Promise<Project>;
   /** 删除项目并级联清除其问题/运行/版本/作业/分析/事件/幂等键（单事务原子；卡 16 纯新增）。 */
   deleteProject(actor: Actor, projectId: string): Promise<void>;
-  importPaper(actor: Actor, input: { name: string; paper: PaperSource; now: string; projectId?: string }): Promise<Project>;
+  importPaper(actor: Actor, input: { name: string; paper: PaperSource; now: string; projectId?: string; file?: PaperFileInput }): Promise<Project>;
+  attachPaperFile(actor: Actor, projectId: string, file: PaperFileInput): Promise<PaperFileBytes>;
+  getPaperFile(actor: Actor, projectId: string, sha256?: string): Promise<PaperFileBytes | null>;
+  updatePaperPageOcr(actor: Actor, input: { projectId: string; sha256?: string; now: string; update: PaperOcrPageUpdate }): Promise<PaperStudy>;
   getPaperStudy(actor: Actor, projectId: string): Promise<PaperStudy | null>;
   savePaperCandidates(actor: Actor, projectId: string, generation: { model: string; candidates: PaperCandidate[] }): Promise<PaperStudy>;
   acceptPaperCandidate(actor: Actor, input: { projectId: string; candidateId: string; question: string; now: string }): Promise<Question>;
@@ -352,10 +376,33 @@ function insertQuestion(draft: StoreState, project: Project, input: {
   return question;
 }
 
-function requirePaperStudy(draft: StoreState, projectId: string): PaperStudy {
-  const paper = draft.paperStudies?.find((study) => study.projectId === projectId);
-  if (!paper) throw new NotFoundError("项目没有已入库的 PDF");
+function requirePaperStudy(draft: StoreState, projectId: string, sha256?: string): PaperStudy {
+  const paper = draft.paperStudies?.find((study) => study.projectId === projectId && (!sha256 || study.sha256 === sha256));
+  if (!paper) throw new NotFoundError(sha256 ? "项目没有这份 PDF" : "项目没有已入库的 PDF");
   return paper;
+}
+
+function normalizePaperPages(paper: PaperSource): PaperSource {
+  const pageSources: PaperPageSource[] = paper.pages.map((text, index) =>
+    paper.pageSources?.[index] ?? (text.trim() ? "text" : "pending"));
+  return {
+    ...clone(paper),
+    pageSources,
+    pageErrors: paper.pages.map((_, index) => paper.pageErrors?.[index] ?? ""),
+    pageRegions: paper.pages.map((_, index) => clone(paper.pageRegions?.[index] ?? [])),
+  };
+}
+
+function storePaperFile(draft: StoreState, projectId: string, file: PaperFileInput): void {
+  if (!/^[a-f0-9]{64}$/i.test(file.sha256)) throw new Error("PDF 文件 SHA-256 无效");
+  if (!(file.bytes instanceof Uint8Array) || !file.bytes.byteLength) throw new Error("PDF 原文件为空");
+  const files = draft.paperFiles ??= [];
+  const existing = files.find((item) => item.projectId === projectId && item.sha256 === file.sha256);
+  if (existing) {
+    if (existing.filename !== file.filename) throw new ConflictError("paper_file_conflict", "同一文件指纹对应不同文件名");
+    return;
+  }
+  files.push({ projectId, filename: file.filename, sha256: file.sha256, bytes: clone(file.bytes) });
 }
 
 function deriveQuestionStatus(draft: StoreState, question: Question): QuestionStatus {
@@ -466,18 +513,69 @@ export function createDataService(backend: StorageBackend): DataService {
       return backend.transact(actor, (draft) => clone(insertProject(draft, name, now, projectId)));
     },
 
-    async importPaper(actor, { name, paper, now, projectId }) {
-      if (!paper.pages.some((page) => page.trim())) throw new Error("PDF 没有可入库的文字");
+    async importPaper(actor, { name, paper, now, projectId, file }) {
+      if (file && file.sha256 !== paper.sha256) throw new ConflictError("paper_file_mismatch", "原 PDF 与入库文件指纹不一致");
+      if (!paper.pages.some((page) => page.trim()) && !file) throw new Error("PDF 没有可入库的文字");
+      const normalized = normalizePaperPages(paper);
       return backend.transact(actor, (draft) => {
         const project = projectId ? requireProject(draft, projectId) : insertProject(draft, name, now);
         const studies = draft.paperStudies ??= [];
         const existing = studies.find((study) => study.projectId === project.projectId);
         if (existing && existing.sha256 !== paper.sha256) throw new ConflictError("paper_exists", "项目已入库另一份 PDF");
         if (!existing) {
-          studies.push({ ...clone(paper), projectId: project.projectId, generation: null });
+          studies.push({ ...normalized, projectId: project.projectId, generation: null });
           touch(project, now);
+        } else {
+          existing.pageSources ??= normalized.pageSources;
+          existing.pageErrors ??= normalized.pageErrors;
+          existing.pageRegions ??= normalized.pageRegions;
         }
+        if (file) storePaperFile(draft, project.projectId, file);
         return clone(project);
+      });
+    },
+
+    async attachPaperFile(actor, projectId, file) {
+      return backend.transact(actor, (draft) => {
+        requireProject(draft, projectId);
+        requirePaperStudy(draft, projectId, file.sha256);
+        storePaperFile(draft, projectId, file);
+        return clone(draft.paperFiles?.find((item) => item.projectId === projectId && item.sha256 === file.sha256) as PaperFileBytes);
+      });
+    },
+
+    async getPaperFile(actor, projectId, sha256) {
+      const state = await backend.read(actor);
+      requireProject(state, projectId);
+      return clone(state.paperFiles?.find((item) => item.projectId === projectId && (!sha256 || item.sha256 === sha256)) ?? null);
+    },
+
+    async updatePaperPageOcr(actor, { projectId, sha256, now, update }) {
+      return backend.transact(actor, (draft) => {
+        const project = requireProject(draft, projectId);
+        const study = requirePaperStudy(draft, projectId, sha256);
+        if (!Number.isSafeInteger(update.page) || update.page < 1 || update.page > study.pages.length) {
+          throw new StorageError("invalid_page", "OCR 页码超出 PDF 页数");
+        }
+        const index = update.page - 1;
+        study.pageSources ??= study.pages.map((text) => text.trim() ? "text" : "pending");
+        study.pageErrors ??= study.pages.map(() => "");
+        study.pageRegions ??= study.pages.map(() => []);
+        if (update.ok) {
+          const text = update.text.trim();
+          if (!text) throw new StorageError("empty_ocr", "OCR 未识别到文字");
+          study.pages[index] = text;
+          study.pageSources[index] = "ocr";
+          study.pageErrors[index] = "";
+          study.pageRegions[index] = clone(update.regions);
+        } else {
+          const error = update.error.trim();
+          if (!error) throw new StorageError("invalid_ocr_error", "缺少 OCR 失败原因");
+          study.pageSources[index] = "failed";
+          study.pageErrors[index] = error;
+        }
+        touch(project, now);
+        return clone(study);
       });
     },
 
@@ -700,6 +798,7 @@ export function createDataService(backend: StorageBackend): DataService {
         );
         draft.projects = draft.projects.filter((p) => p.projectId !== projectId);
         if (draft.paperStudies) draft.paperStudies = draft.paperStudies.filter((study) => study.projectId !== projectId);
+        if (draft.paperFiles) draft.paperFiles = draft.paperFiles.filter((file) => file.projectId !== projectId);
         draft.questions = draft.questions.filter((q) => !questionIds.has(q.questionId));
         draft.runs = draft.runs.filter((r) => r.projectId !== projectId);
         draft.revisions = draft.revisions.filter((r) => !questionIds.has(r.questionId));

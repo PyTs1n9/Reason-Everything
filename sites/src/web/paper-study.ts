@@ -1,9 +1,20 @@
 import { codePointSlice, locate } from "../core/grounding.ts";
 import { isRecord, loadJson } from "../core/json.ts";
+import { paperTextFromItems } from "./paper-locate.ts";
 
 export const PAPER_MODEL_PATH = "/functions/v1/app/paper-questions";
 const BATCH_SIZE = 10_000;
 const MAX_CANDIDATES = 5;
+
+export type PaperPageSource = "text" | "ocr" | "pending" | "failed";
+
+export interface PaperRegion {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface PaperSource {
   title: string;
@@ -11,6 +22,9 @@ export interface PaperSource {
   sha256: string;
   /** 按 PDF 文件物理页序保存，空文字层也保留位置。 */
   pages: string[];
+  pageSources?: PaperPageSource[];
+  pageErrors?: string[];
+  pageRegions?: PaperRegion[][];
 }
 
 export interface PaperCitation {
@@ -57,9 +71,7 @@ export async function extractPaperPages(pdf: TextPdf): Promise<string[]> {
   for (let number = 1; number <= pdf.numPages; number++) {
     const page = await pdf.getPage(number);
     const content = await page.getTextContent();
-    pages.push(content.items.filter((item) => typeof item.str === "string")
-      .map((item) => (item.str ?? "") + (item.hasEOL ? "\n" : " ")).join("")
-      .replace(/[ \t]{2,}/g, " ").trim());
+    pages.push(paperTextFromItems(content.items));
   }
   return pages;
 }
@@ -68,10 +80,12 @@ export const PAPER_SYSTEM_PROMPT = `你是研究助理。阅读 JSON 中的新�
 每条候选给出问句 question、待检验主张 claim、为什么值得研究 rationale 及可行的验证方法 verification。区分作者的观察与拟检验的假设，禁止编造论文的结果。给出 1 到 3 条 citations，每条含物理 PDF 页码 page 和该页连续的原语言摘录 quote（12 到 400 字符）。只能引用 passages 或 previous 中实际给出的文字，同页时不要把不同片段拼成一句。
 只输出 JSON 对象 {"candidates":[{"question":"…","claim":"…","rationale":"…","verification":"…","citations":[{"page":1,"quote":"…"}]}]}。保留至多 5 条，按研究价值排序。材料不足时，允许 candidates 为空。`;
 
-function* paperBatches(pages: string[]): Generator<PaperExcerpt[]> {
+function* paperBatches(paper: PaperSource): Generator<PaperExcerpt[]> {
   let batch: PaperExcerpt[] = [];
   let size = 0;
-  for (const [index, pageText] of pages.entries()) {
+  for (const [index, pageText] of paper.pages.entries()) {
+    const source = paper.pageSources?.[index] ?? (pageText.trim() ? "text" : "pending");
+    if (source !== "text" && source !== "ocr") continue;
     const points = Array.from(pageText);
     for (let start = 0; start < points.length; start += 3200) {
       const text = points.slice(start, start + 3600).join("").trim();
@@ -152,7 +166,7 @@ export async function generatePaperCandidates(
   let candidates: PaperCandidate[] = [];
   let model = "";
   let count = 0;
-  for (const passages of paperBatches(paper.pages)) {
+  for (const passages of paperBatches(paper)) {
     onBatch(++count);
     const result = await complete({ title: paper.title, passages, previous: candidates });
     model = result.model;

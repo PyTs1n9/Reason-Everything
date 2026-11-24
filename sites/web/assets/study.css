@@ -2596,3 +2596,237 @@ select:focus-visible,
     backdrop-filter: none;
   }
 }
+
+/* PDF 扫描识别与原版定位 */
+.ocr-panel {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.ocr-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ocr-panel-head h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.ocr-panel-head p {
+  margin: 0;
+}
+
+.ocr-page-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ocr-page-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.ocr-page-no {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ocr-page-detail,
+.ocr-page-error {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.ocr-page-error {
+  color: var(--danger);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--tag-bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-badge.is-text,
+.status-badge.is-ocr {
+  border-color: var(--brand);
+  background: var(--measured-bg);
+  color: var(--brand);
+}
+
+.status-badge.is-pending {
+  border-color: var(--amber-line);
+  color: var(--amber);
+}
+
+.status-badge.is-failed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.ocr-details summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.btn-small {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.paper-reader-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pdf-overlay {
+  z-index: 80;
+}
+
+.modal--pdf {
+  width: min(1100px, 100%);
+  height: min(92vh, 940px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.pdf-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pdf-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.pdf-precision {
+  margin: 0;
+  max-width: 50%;
+  text-align: right;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pdf-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+  background: var(--tag-bg);
+}
+
+.pdf-page {
+  position: relative;
+  margin: 0 auto;
+  background: var(--surface);
+  box-shadow: 0 8px 24px var(--shadow);
+}
+
+.pdf-page canvas {
+  display: block;
+}
+
+.pdf-highlights {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pdf-highlight {
+  position: absolute;
+  background: rgba(181, 138, 43, 0.28);
+  border: 1px solid var(--amber-line);
+  border-radius: 2px;
+}
+
+.pdf-quote {
+  flex: none;
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+@media (max-width: 767px) {
+  .ocr-panel-head {
+    flex-direction: column;
+  }
+
+  .ocr-page-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .ocr-page-detail,
+  .ocr-page-error {
+    grid-column: 1 / -1;
+  }
+
+  .modal--pdf {
+    height: 94vh;
+  }
+
+  .pdf-head {
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .pdf-precision {
+    max-width: none;
+    text-align: left;
+  }
+
+  .pdf-toolbar {
+    padding: 8px 12px;
+  }
+
+  .pdf-stage {
+    padding: 8px;
+  }
+}
