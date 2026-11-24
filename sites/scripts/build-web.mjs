@@ -28,6 +28,7 @@ const sources = [
   "src/agent/service.ts",
   "src/workflow/service.ts",
   "src/web/model.ts",
+  "src/web/sidebar.ts",
   "src/web/literature.ts",
   "src/web/paper-locate.ts",
   "src/web/paper-ocr.ts",

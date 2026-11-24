@@ -28,6 +28,14 @@ import {
   typeColorClass,
   buildSaveModeInfo,
 } from "./gen/src/web/model.js";
+import {
+  SIDEBAR_COLLAPSED_KEY,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_WIDTH_KEY,
+  clampSidebarWidth,
+  parseSidebarWidth,
+  sidebarWidthFromKey,
+} from "./gen/src/web/sidebar.js";
 import { createLiteratureClient } from "./gen/src/web/literature.js";
 import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
 import { locateInRegions, locateInTextItems } from "./gen/src/web/paper-locate.js";
@@ -51,8 +59,10 @@ const wf = createWorkflowService(wfDeps);
 globalThis.__agentflow = { wfDeps };
 
 const main = document.getElementById("main");
+const shell = document.querySelector(".shell");
 const sidebar = document.getElementById("sidebar");
 const navBtn = document.getElementById("navBtn");
+const sidebarResizer = document.getElementById("sidebarResizer");
 // ---------- 顶栏「本机保存」弹层（卡 18） ----------
 
 const saveModeBtn = document.getElementById("saveMode");
@@ -439,6 +449,9 @@ const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke=
 const ICON_PIN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
 const ICON_EDIT = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
 const ICON_TRASH = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
+
+const ICON_PANEL_CLOSE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 9-3 3 3 3"/></svg>';
+const ICON_PANEL_OPEN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m12 9 3 3-3 3"/></svg>';
 
 /** 无搜索结果插画（内联 SVG，不引图形依赖）。 */
 const ILLUSTRATION_EMPTY = '<svg viewBox="0 0 96 64" width="96" height="64" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="16" y="8" width="38" height="50" rx="4"/><line x1="24" y1="20" x2="46" y2="20"/><line x1="24" y1="28" x2="46" y2="28"/><line x1="24" y1="36" x2="38" y2="36"/><circle cx="66" cy="38" r="12"/><line x1="75" y1="47" x2="86" y2="58"/></svg>';
@@ -4081,22 +4094,190 @@ async function copySuggestion(suggestion, button) {
   }, 2000);
 }
 
-// ---------- 导航按钮 ----------
+// ---------- 研究库侧栏 ----------
 
-function closeNav() {
+const desktopSidebarQuery = window.matchMedia("(min-width: 1200px)");
+let sidebarWasDesktop = desktopSidebarQuery.matches;
+let sidebarWidth = parseSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
+let sidebarCollapsed = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+let resizePointerId = null;
+let resizeStartX = 0;
+let resizeStartWidth = SIDEBAR_DEFAULT_WIDTH;
+const sidebarTreeImage = sidebarResizer.querySelector(".sidebar-tree-image");
+const sidebarLeafSource = sidebarResizer.querySelector(".sidebar-leaf-source");
+const sidebarFeatherMarkImage = sidebarResizer.closest(".sidebar").querySelector(".sidebar-feather-mark-image");
+const sidebarFeatherImage = sidebarResizer.closest(".sidebar").querySelector(".sidebar-feather-image");
+const sidebarLeafLayer = document.getElementById("sidebarLeafLayer");
+const sidebarReducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+let sidebarLeafReady = false;
+let sidebarFeatherReadyCount = 0;
+let lastSidebarLeafAt = 0;
+
+function loadSidebarArtwork(image, onLoad) {
+  image.addEventListener("load", onLoad, { once: true });
+  image.addEventListener("error", () => {
+    image.hidden = true;
+  }, { once: true });
+  image.src = image.dataset.src;
+}
+
+function markSidebarFeatherReady() {
+  sidebarFeatherReadyCount += 1;
+  if (sidebarFeatherReadyCount === 2) shell.classList.add("sidebar-feather-ready");
+}
+
+function emitSidebarLeaves() {
+  if (!sidebarLeafReady || sidebarReducedMotionQuery.matches || resizePointerId === null) return;
+  const now = performance.now();
+  if (now - lastSidebarLeafAt < 90 || sidebarLeafLayer.childElementCount >= 12) return;
+  lastSidebarLeafAt = now;
+  const bounds = shell.classList.contains("sidebar-tree-ready")
+    ? sidebarTreeImage.getBoundingClientRect()
+    : sidebarResizer.getBoundingClientRect();
+  for (let index = 0; index < 2 && sidebarLeafLayer.childElementCount < 12; index += 1) {
+    const leaf = sidebarLeafSource.cloneNode(true);
+    const x = bounds.left + bounds.width * (0.32 + Math.random() * 0.36);
+    const y = bounds.top + bounds.height * (0.06 + Math.random() * 0.14);
+    leaf.hidden = false;
+    leaf.removeAttribute("data-src");
+    leaf.className = "sidebar-falling-leaf";
+    leaf.style.setProperty("--leaf-x", `${x}px`);
+    leaf.style.setProperty("--leaf-y", `${y}px`);
+    leaf.style.setProperty("--leaf-drift", `${-36 + Math.random() * 144}px`);
+    leaf.style.setProperty("--leaf-fall", `${120 + Math.random() * 140}px`);
+    leaf.style.setProperty("--leaf-spin", `${-220 + Math.random() * 520}deg`);
+    leaf.style.setProperty("--leaf-scale", (0.72 + Math.random() * 0.36).toFixed(2));
+    leaf.addEventListener("animationend", () => leaf.remove(), { once: true });
+    sidebarLeafLayer.append(leaf);
+  }
+}
+
+function syncSidebarChrome() {
+  const desktop = desktopSidebarQuery.matches;
+  const drawerOpen = !desktop && sidebar.classList.contains("open");
+  const visible = desktop ? !sidebarCollapsed : drawerOpen;
+  const action = desktop ? (visible ? "收起" : "展开") : (visible ? "关闭" : "打开");
+  shell.classList.toggle("sidebar-collapsed", desktop && sidebarCollapsed);
+  sidebar.setAttribute("aria-hidden", String(!visible));
+  navBtn.setAttribute("aria-expanded", String(visible));
+  navBtn.setAttribute("aria-label", `${action}研究库`);
+  navBtn.title = `${action}研究库`;
+  navBtn.querySelector(".nav-btn-label").textContent = `${action}研究库`;
+  navBtn.querySelector(".nav-btn-icon").innerHTML = visible ? ICON_PANEL_CLOSE : ICON_PANEL_OPEN;
+  const canResize = desktop && !sidebarCollapsed;
+  sidebarResizer.tabIndex = canResize ? 0 : -1;
+  sidebarResizer.setAttribute("aria-disabled", String(!canResize));
+}
+
+function applySidebarWidth(width, persist = false) {
+  sidebarWidth = clampSidebarWidth(width);
+  shell.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+  sidebarResizer.setAttribute("aria-valuenow", String(sidebarWidth));
+  sidebarResizer.setAttribute("aria-valuetext", `${sidebarWidth} 像素`);
+  if (persist && desktopSidebarQuery.matches) {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }
+}
+
+function closeNav(restoreFocus = false) {
   sidebar.classList.remove("open");
-  navBtn.setAttribute("aria-expanded", "false");
+  syncSidebarChrome();
+  if (restoreFocus) navBtn.focus();
 }
 
 navBtn.addEventListener("click", () => {
-  const open = sidebar.classList.toggle("open");
-  navBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (desktopSidebarQuery.matches) {
+    sidebarCollapsed = !sidebarCollapsed;
+    sidebar.classList.remove("open");
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed));
+  } else {
+    sidebar.classList.toggle("open");
+  }
+  syncSidebarChrome();
+});
+
+function finishSidebarResize(pointerId, persist = true) {
+  if (pointerId !== resizePointerId) return;
+  resizePointerId = null;
+  document.body.classList.remove("sidebar-resizing");
+  if (sidebarResizer.hasPointerCapture(pointerId)) sidebarResizer.releasePointerCapture(pointerId);
+  if (persist && desktopSidebarQuery.matches) {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }
+}
+
+sidebarResizer.addEventListener("pointerdown", (event) => {
+  if (!desktopSidebarQuery.matches || sidebarCollapsed || resizePointerId !== null) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  event.preventDefault();
+  resizePointerId = event.pointerId;
+  resizeStartX = event.clientX;
+  resizeStartWidth = sidebarWidth;
+  sidebarResizer.focus({ preventScroll: true });
+  sidebarResizer.setPointerCapture(event.pointerId);
+  document.body.classList.add("sidebar-resizing");
+  emitSidebarLeaves();
+});
+
+sidebarResizer.addEventListener("pointermove", (event) => {
+  if (event.pointerId !== resizePointerId) return;
+  event.preventDefault();
+  applySidebarWidth(resizeStartWidth + event.clientX - resizeStartX);
+  emitSidebarLeaves();
+});
+
+sidebarResizer.addEventListener("pointerup", (event) => finishSidebarResize(event.pointerId));
+sidebarResizer.addEventListener("pointercancel", (event) => finishSidebarResize(event.pointerId));
+sidebarResizer.addEventListener("lostpointercapture", (event) => finishSidebarResize(event.pointerId, false));
+
+sidebarResizer.addEventListener("keydown", (event) => {
+  if (!desktopSidebarQuery.matches || sidebarCollapsed) return;
+  const next = sidebarWidthFromKey(sidebarWidth, event.key);
+  if (next === sidebarWidth) return;
+  event.preventDefault();
+  applySidebarWidth(next, true);
+});
+
+function syncSidebarViewport() {
+  const desktop = desktopSidebarQuery.matches;
+  if (sidebarWasDesktop && !desktop) sidebar.classList.remove("open");
+  sidebarWasDesktop = desktop;
+  syncSidebarChrome();
+}
+
+desktopSidebarQuery.addEventListener("change", syncSidebarViewport);
+window.addEventListener("resize", syncSidebarViewport);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (resizePointerId !== null) {
+    finishSidebarResize(resizePointerId);
+  } else if (!desktopSidebarQuery.matches && sidebar.classList.contains("open")) {
+    closeNav(true);
+  }
+});
+
+window.addEventListener("blur", () => {
+  if (resizePointerId !== null) finishSidebarResize(resizePointerId);
 });
 
 // 侧栏为动态渲染：链接点击（含树内导航）后收起移动端抽屉
 document.getElementById("sideNav").addEventListener("click", (event) => {
-  if (event.target.closest("a")) closeNav();
+  if (event.target.closest("a") && !desktopSidebarQuery.matches) closeNav(true);
 });
+
+loadSidebarArtwork(sidebarTreeImage, () => shell.classList.add("sidebar-tree-ready"));
+loadSidebarArtwork(sidebarLeafSource, () => {
+  sidebarLeafReady = true;
+});
+loadSidebarArtwork(sidebarFeatherMarkImage, markSidebarFeatherReady);
+loadSidebarArtwork(sidebarFeatherImage, markSidebarFeatherReady);
+sidebarReducedMotionQuery.addEventListener("change", (event) => {
+  if (event.matches) sidebarLeafLayer.replaceChildren();
+});
+
+applySidebarWidth(sidebarWidth);
+syncSidebarChrome();
 
 // ---------- 拖放导入 PDF（与「导入 PDF」按钮同一条本地解析路径） ----------
 
