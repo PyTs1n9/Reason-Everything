@@ -82,6 +82,42 @@ test("提交兜底：未选输入方式时在显示层补缺项；纯函数契�
   );
 });
 
+test("项目卡片编辑入口同时修改名称与类别，并持久化本机类型映射", () => {
+  const start = js.indexOf("function openRenameProjectModal(");
+  const end = js.indexOf("function closeRenameProjectModal(", start);
+  const modal = js.slice(start, end);
+  assert.ok(js.includes('"aria-label": `编辑项目 ${project.name}`'));
+  assert.ok(js.includes('title: "编辑"'));
+  assert.match(modal, /id: "editProjectType", name: "projectType"/);
+  assert.match(modal, /typeSelect\.value = currentType;/);
+  assert.match(modal, /if \(nameChanged\) await data\.renameProject/);
+  assert.match(modal, /persistProjectType\(project\.projectId, nextType\);/);
+  assert.match(modal, /项目类别已改为/);
+  assert.ok(js.includes("changeProjectType(loadProjectTypes(), projectId, type)"));
+});
+
+test("新建研究问题按项目类别生成设计提示，范围值仍使用冻结契约", () => {
+  const start = js.indexOf("async function renderNewQuestion(");
+  const end = js.indexOf("// ---------- 视图 4", start);
+  const view = js.slice(start, end);
+  assert.match(view, /const projectType = normalizeProjectType\(loadProjectTypes\(\)\[projectId\] \?\? "其他"\);/);
+  assert.match(view, /const profile = buildQuestionFormProfile\(projectType\);/);
+  assert.match(view, /class: "type-guide", "aria-labelledby": "typeGuideTitle"/);
+  assert.match(view, /typeGuide, claimSection, dataSection, mappingSection, runSection, scopeSection, submitRow/);
+  assert.match(view, /placeholder: profile\.claimPlaceholder/);
+  assert.match(view, /value: "target_lr", id: "scopeTarget"/);
+  assert.match(view, /value: "both_lrs", id: "scopeBoth"/);
+  assert.match(view, /text: profile\.targetConditionLabel/);
+});
+
+test("类型提示与范围选项样式支持窄屏单列和主题令牌", () => {
+  assert.match(ruleBody(css, ".type-guide {"), /background:\s*var\(--brand-soft\)/);
+  assert.match(ruleBody(css, ".type-guide-boundary {"), /color:\s*var\(--ink-2\)/);
+  assert.match(ruleBody(css, ".scope-row {"), /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.ok(css.includes("@media (max-width: 560px)"));
+  assert.match(css.slice(css.indexOf("@media (max-width: 560px)")), /\.scope-row\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
+});
+
 // ---------- 问题详情：标识符可读化 ----------
 
 test("详情接线：问题编号缩短显示（完整编号留 title）；缺口与结论走可读标签", () => {

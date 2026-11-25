@@ -4,8 +4,10 @@ import { test } from "node:test";
 import type { ProjectSummary } from "../src/experiment/storage.ts";
 import type { TrainingRun } from "../src/experiment/types.ts";
 import {
+  buildQuestionFormProfile,
   buildSideTree,
   cardFeatherVariant,
+  changeProjectType,
   computeDashboardStats,
   deriveLrOptions,
   evaluateEntryMissing,
@@ -204,6 +206,30 @@ test("本机类型映射解析：损坏 JSON、数组、非字符串值一律剔
     p1: "计算机科学",
     p4: "数学",
   });
+});
+
+test("更改项目类别保留其他项目并归一未知值，不修改原映射", () => {
+  const original = { p1: "计算机科学", p2: "数学" };
+  assert.deepEqual(changeProjectType(original, "p1", " 医学 "), { p1: "医学", p2: "数学" });
+  assert.deepEqual(changeProjectType(original, "p3", "天文学"), { p1: "计算机科学", p2: "数学", p3: "其他" });
+  assert.deepEqual(original, { p1: "计算机科学", p2: "数学" });
+});
+
+test("研究问题表单按学科给出不同设计提示，未知类别回退到通用方案", () => {
+  const cs = buildQuestionFormProfile("计算机科学");
+  const medicine = buildQuestionFormProfile("医学");
+  const other = buildQuestionFormProfile("未知学科");
+  assert.equal(cs.targetScopeLabel, "目标学习率");
+  assert.equal(medicine.guideTitle, "临床研究设计");
+  assert.match(medicine.guideIntro, /研究对象/);
+  assert.match(medicine.boundary, /不把模型准确率直接当作临床疗效|当前矩阵仅支持/);
+  assert.notEqual(cs.scopeTitle, medicine.scopeTitle);
+  assert.notEqual(cs.claimPlaceholder, medicine.claimPlaceholder);
+  assert.equal(other.type, "其他");
+  assert.equal(other.checklist.length, 3);
+  const exposed = buildQuestionFormProfile("医学");
+  (exposed.checklist as string[]).push("测试修改");
+  assert.equal(buildQuestionFormProfile("医学").checklist.length, 3);
 });
 
 test("侧栏树保持项目与问题顺序，空问题项目保留为空文件夹", () => {

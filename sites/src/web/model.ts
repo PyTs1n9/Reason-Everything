@@ -44,6 +44,123 @@ export function parseProjectTypes(raw: string | null): Record<string, string> {
   return out;
 }
 
+/** 更改本机项目类别：保留其他项目，未知类别归「其他」，不改输入映射。 */
+export function changeProjectType(
+  types: Readonly<Record<string, string>>,
+  projectId: string,
+  rawType: string,
+): Record<string, string> {
+  return { ...types, [projectId]: normalizeProjectType(rawType) };
+}
+
+export interface QuestionFormProfile {
+  type: string;
+  guideTitle: string;
+  guideIntro: string;
+  checklist: readonly string[];
+  boundary: string;
+  claimPlaceholder: string;
+  scopeTitle: string;
+  targetScopeLabel: string;
+  bothScopeLabel: string;
+  targetScopeHint: string;
+  bothScopeHint: string;
+  targetConditionLabel: string;
+}
+
+const QUESTION_FORM_PROFILES: Record<string, QuestionFormProfile> = {
+  计算机科学: {
+    type: "计算机科学",
+    guideTitle: "算法实验设计",
+    guideIntro: "先写清可复现的实验条件，再判断数据增强是否带来稳定提升。",
+    checklist: ["固定模型、评测集与随机种子", "基线只改变增强开关", "确认学习率来自数据且单位一致"],
+    boundary: "当前分析器比较增强开关与准确率；缺少严格配对条件时会保留缺测并建议补跑。",
+    claimPlaceholder: "例如：在 ResNet18 与 CIFAR-10 上，数据增强使准确率提高了 2 个百分点",
+    scopeTitle: "实验验证范围",
+    targetScopeLabel: "目标学习率",
+    bothScopeLabel: "两档都验证",
+    targetScopeHint: "只检查目标运行所在学习率的一档对照。",
+    bothScopeHint: "对数据中的两档学习率逐档检查，不合并结论。",
+    targetConditionLabel: "目标学习率（数据中的取值）",
+  },
+  数学: {
+    type: "数学",
+    guideTitle: "论证与数值实验",
+    guideIntro: "区分解析论证、数值实验和反例；导入结果时保持同一问题定义与计算精度。",
+    checklist: ["明确命题与适用假设", "说明数值精度和收敛标准", "用反例检查结论边界"],
+    boundary: "当前表格分析只处理准确率与增强开关，不能替代数学证明或符号推导。",
+    claimPlaceholder: "例如：在固定初值与容差下，该数值方法使目标函数收敛所需迭代减少",
+    scopeTitle: "验证范围",
+    targetScopeLabel: "目标条件（lr）",
+    bothScopeLabel: "两档条件逐档（lr）",
+    targetScopeHint: "只检查目标运行对应的一个实验条件。",
+    bothScopeHint: "分别检查两档实验条件，避免用一档结果代替全称结论。",
+    targetConditionLabel: "目标实验条件（lr 列取值）",
+  },
+  生物学: {
+    type: "生物学",
+    guideTitle: "生物实验设计",
+    guideIntro: "先核对样本、批次、对照与检测指标，避免把技术重复当作独立样本。",
+    checklist: ["明确样本单位与独立重复数", "记录批次、处理条件与对照", "确认主要检测指标和缺失值"],
+    boundary: "当前表格分析不识别生物学显著性；统计检验和实验设计仍需单独核对。",
+    claimPlaceholder: "例如：在相同培养条件下，处理组的目标蛋白表达高于对照组",
+    scopeTitle: "实验验证范围",
+    targetScopeLabel: "目标实验条件（lr）",
+    bothScopeLabel: "两档实验条件逐档（lr）",
+    targetScopeHint: "只检查目标运行对应的一个实验条件。",
+    bothScopeHint: "分别检查两档条件，保留各档独立的证据与缺口。",
+    targetConditionLabel: "目标实验条件（lr 列取值）",
+  },
+  医学: {
+    type: "医学",
+    guideTitle: "临床研究设计",
+    guideIntro: "先核对研究设计、研究对象、对照和结局，不把模型准确率直接当作临床疗效。",
+    checklist: ["研究设计：随机对照、队列或病例对照", "研究对象：入排标准、样本量与亚组", "结局指标：主要/次要终点、随访时间与缺失值"],
+    boundary: "当前矩阵仅支持可严格配对的表格实验；不满足条件时请先保存草稿，或从 PDF 候选问题进入原文证据研究。",
+    claimPlaceholder: "例如：在特定入排标准下，干预组的主要结局优于对照组",
+    scopeTitle: "研究验证范围",
+    targetScopeLabel: "目标研究条件（lr）",
+    bothScopeLabel: "两档研究条件逐档（lr）",
+    targetScopeHint: "只检查目标运行对应的一个可配对条件。",
+    bothScopeHint: "逐档核对两档条件；不同人群或终点不得直接合并。",
+    targetConditionLabel: "目标研究条件（lr 列取值）",
+  },
+  经济学: {
+    type: "经济学",
+    guideTitle: "经济研究设计",
+    guideIntro: "核对识别策略、样本期间、对照组与结局变量，区分相关关系与因果效应。",
+    checklist: ["明确识别策略与反事实对照", "固定样本期间和处理组定义", "检查异质性、缺失值与稳健性"],
+    boundary: "当前表格分析不代替因果识别或统计推断，结论只覆盖已严格配对的数据。",
+    claimPlaceholder: "例如：在相同样本期间内，政策处理使目标结局提高了指定幅度",
+    scopeTitle: "验证范围",
+    targetScopeLabel: "目标识别条件（lr）",
+    bothScopeLabel: "两档识别条件逐档（lr）",
+    targetScopeHint: "只检查目标运行对应的一个实验条件。",
+    bothScopeHint: "分别检查两档条件，避免跨期间或跨样本拼接证据。",
+    targetConditionLabel: "目标实验条件（lr 列取值）",
+  },
+  其他: {
+    type: "其他",
+    guideTitle: "研究设计核对",
+    guideIntro: "先明确问题、对照和结局，再导入能够严格配对的实验数据。",
+    checklist: ["明确研究问题与主张边界", "固定对照条件和测量口径", "记录样本、缺失值与适用条件"],
+    boundary: "当前分析器固定比较增强开关与准确率；其他研究设计请先保存草稿或使用论文证据路径。",
+    claimPlaceholder: "例如：在相同条件下，目标处理使主要指标提高了 2 个百分点",
+    scopeTitle: "验证范围",
+    targetScopeLabel: "目标条件（lr）",
+    bothScopeLabel: "两档条件逐档（lr）",
+    targetScopeHint: "只检查目标运行对应的一个实验条件。",
+    bothScopeHint: "分别检查两档条件，保留各档独立的证据与缺口。",
+    targetConditionLabel: "目标实验条件（lr 列取值）",
+  },
+};
+
+/** 按项目类别生成录入提示；范围值仍只使用冻结契约的 target_lr / both_lrs。 */
+export function buildQuestionFormProfile(rawType: string): QuestionFormProfile {
+  const profile = QUESTION_FORM_PROFILES[normalizeProjectType(rawType)] ?? QUESTION_FORM_PROFILES["其他"]!;
+  return { ...profile, checklist: [...profile.checklist] };
+}
+
 // ---------- 工作台统计 / 搜索高亮 / 置顶排序（卡 15） ----------
 
 export interface DashboardStats {

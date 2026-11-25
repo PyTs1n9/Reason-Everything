@@ -8,8 +8,10 @@ import { validateAccuracy } from "./gen/src/experiment/runs.js";
 import { buildFactRegistry } from "./gen/src/agent/facts.js";
 import {
   PROJECT_TYPES,
+  buildQuestionFormProfile,
   buildQuestionMatrix,
   buildSideTree,
+  changeProjectType,
   computeDashboardStats,
   deriveLrOptions,
   describeCellId,
@@ -571,11 +573,14 @@ function loadProjectTypes() {
   }
 }
 
+function persistProjectType(projectId, type) {
+  const map = changeProjectType(loadProjectTypes(), projectId, type);
+  localStorage.setItem(PROJECT_TYPES_KEY, JSON.stringify(map));
+}
+
 function saveProjectType(projectId, type) {
-  const map = loadProjectTypes();
-  map[projectId] = type;
   try {
-    localStorage.setItem(PROJECT_TYPES_KEY, JSON.stringify(map));
+    persistProjectType(projectId, type);
   } catch {
     // 存不下只影响标签展示，不阻断创建流程
   }
@@ -715,8 +720,8 @@ async function renderProjects() {
     const renameBtn = h("button", {
       class: "card-action",
       type: "button",
-      "aria-label": `重命名项目 ${project.name}`,
-      title: "重命名",
+      "aria-label": `编辑项目 ${project.name}`,
+      title: "编辑",
     });
     renameBtn.insertAdjacentHTML("afterbegin", ICON_EDIT);
     renameBtn.addEventListener("click", async () => {
@@ -1463,7 +1468,7 @@ async function openPdfViewer(paper, file, pageNumber, quote = null, trigger = nu
   return true;
 }
 
-// ---------- 卡片操作：重命名 ----------
+// ---------- 卡片操作：编辑名称与项目类别 ----------
 
 let renameModalState = null;
 
@@ -1478,6 +1483,7 @@ function openRenameProjectModal(project, trigger, onRenamed) {
     "aria-labelledby": "renameModalTitle",
     tabindex: "-1",
   });
+  const currentType = normalizeProjectType(loadProjectTypes()[project.projectId] ?? "其他");
 
   const nameInput = h("input", {
     type: "text",
@@ -1485,15 +1491,24 @@ function openRenameProjectModal(project, trigger, onRenamed) {
     value: project.name,
     autocomplete: "off",
   });
+  const typeSelect = h("select", { id: "editProjectType", name: "projectType" },
+    ...PROJECT_TYPES.map((type) => h("option", { value: type, text: type })),
+  );
+  typeSelect.value = currentType;
   const error = h("p", { class: "field-error", id: "renameModalError", hidden: true });
   const confirmBtn = h("button", { class: "btn btn-primary", type: "button", text: "保存" });
   const cancelBtn = h("button", { class: "btn", type: "button", text: "取消" });
 
   modal.append(
-    h("h2", { id: "renameModalTitle", text: "重命名项目" }),
+    h("h2", { id: "renameModalTitle", text: "编辑项目" }),
     h("div", { class: "field" },
       h("label", { for: "renameProjectInput", text: "项目名" }),
       nameInput,
+    ),
+    h("div", { class: "field" },
+      h("label", { for: "editProjectType", text: "项目类别" }),
+      typeSelect,
+      h("p", { class: "aux", text: "类别会同步影响新建研究问题的设计提示，仅保存在当前浏览器。" }),
     ),
     error,
     h("div", { class: "modal-actions" }, confirmBtn, cancelBtn),
@@ -1508,18 +1523,26 @@ function openRenameProjectModal(project, trigger, onRenamed) {
       nameInput.focus();
       return;
     }
+    const nextType = normalizeProjectType(typeSelect.value);
+    const nameChanged = name !== project.name;
+    const typeChanged = nextType !== currentType;
+    if (!nameChanged && !typeChanged) {
+      closeRenameProjectModal();
+      return;
+    }
     nameInput.removeAttribute("aria-invalid");
     error.hidden = true;
     confirmBtn.disabled = true;
     try {
-      await data.renameProject(ACTOR, project.projectId, name, new Date().toISOString());
+      if (nameChanged) await data.renameProject(ACTOR, project.projectId, name, new Date().toISOString());
+      persistProjectType(project.projectId, nextType);
       closeRenameProjectModal(false);
-      toast(`已重命名为「${name}」`, "ok");
+      toast(nameChanged && typeChanged ? "已更新项目名称和类别" : typeChanged ? `项目类别已改为「${nextType}」` : `已重命名为「${name}」`, "ok");
       if (onRenamed) await onRenamed();
-    } catch (renameError) {
+    } catch (saveError) {
       confirmBtn.disabled = false;
       error.hidden = false;
-      error.textContent = `重命名失败：${renameError && renameError.message ? renameError.message : String(renameError)}`;
+      error.textContent = `保存失败：${saveError && saveError.message ? saveError.message : String(saveError)}`;
     }
   });
   cancelBtn.addEventListener("click", () => closeRenameProjectModal());
@@ -2885,13 +2908,24 @@ async function renderNewQuestion(projectId) {
   if (!project) throw new Error(`项目不存在: ${projectId}`);
   resetEntry(projectId);
   entry.existingRuns = await data.listRuns(ACTOR, projectId);
+  const projectType = normalizeProjectType(loadProjectTypes()[projectId] ?? "其他");
+  const profile = buildQuestionFormProfile(projectType);
 
   const backLink = h("a", { class: "back-link back-link--follow", href: `#/project/${projectId}`, text: "← 返回项目" });
   const head = h("div", { class: "page-head" },
     h("div", { class: "field", style: "gap:6px" },
       h("h1", { text: "新建研究问题" }),
     ),
-    h("span", { class: "aux", text: `项目：${project.name}` }),
+    h("span", { class: "aux", text: `项目：${project.name} · ${projectType}` }),
+  );
+  const typeGuide = h("aside", { class: "type-guide", "aria-labelledby": "typeGuideTitle" },
+    h("div", { class: "type-guide-heading" },
+      h("span", { class: `card-tag ${typeColorClass(projectType)}`, text: projectType }),
+      h("h2", { id: "typeGuideTitle", text: profile.guideTitle }),
+    ),
+    h("p", { text: profile.guideIntro }),
+    h("ul", {}, ...profile.checklist.map((item) => h("li", { text: item }))),
+    h("p", { class: "type-guide-boundary", text: profile.boundary }),
   );
 
   // 主张
@@ -2906,7 +2940,7 @@ async function renderNewQuestion(projectId) {
         h("textarea", {
           id: claimId,
           name: "rawClaim",
-          placeholder: "例如：数据增强使准确率提高了 2 个百分点",
+          placeholder: profile.claimPlaceholder,
           "aria-describedby": "claimError",
         }),
         claimError,
@@ -2992,15 +3026,21 @@ async function renderNewQuestion(projectId) {
   // 范围
   const lrHost = h("div", { id: "lrHost" });
   const scopeSection = h("section", { class: "form-section", "aria-labelledby": "scopeTitle" },
-    h("h2", { class: "form-section-title", id: "scopeTitle" }, "问题范围", h("span", { class: "req-badge", text: "必选" })),
+    h("h2", { class: "form-section-title", id: "scopeTitle" }, profile.scopeTitle, h("span", { class: "req-badge", text: "必选" })),
     h("div", { class: "scope-row", role: "radiogroup", "aria-label": "问题范围" },
-      h("label", {},
-        h("input", { type: "radio", name: "scope", value: "target_lr", id: "scopeTarget" }),
-        "目标学习率",
+      h("div", { class: "scope-choice" },
+        h("label", {},
+          h("input", { type: "radio", name: "scope", value: "target_lr", id: "scopeTarget", "aria-describedby": "scopeTargetHint" }),
+          profile.targetScopeLabel,
+        ),
+        h("p", { class: "choice-hint", id: "scopeTargetHint", text: profile.targetScopeHint }),
       ),
-      h("label", {},
-        h("input", { type: "radio", name: "scope", value: "both_lrs", id: "scopeBoth" }),
-        "两档都验证",
+      h("div", { class: "scope-choice" },
+        h("label", {},
+          h("input", { type: "radio", name: "scope", value: "both_lrs", id: "scopeBoth", "aria-describedby": "scopeBothHint" }),
+          profile.bothScopeLabel,
+        ),
+        h("p", { class: "choice-hint", id: "scopeBothHint", text: profile.bothScopeHint }),
       ),
     ),
     h("p", { class: "choice-hint", id: "scopeHint" }, "请选择验证范围（二选一）"),
@@ -3014,7 +3054,7 @@ async function renderNewQuestion(projectId) {
   );
 
   const form = h("form", { class: "entry-form", id: "entryForm", novalidate: true },
-    claimSection, dataSection, mappingSection, runSection, scopeSection, submitRow,
+    typeGuide, claimSection, dataSection, mappingSection, runSection, scopeSection, submitRow,
   );
 
   main.append(backLink, head, form);
@@ -3292,7 +3332,7 @@ async function renderNewQuestion(projectId) {
       });
       lrHost.append(
         h("div", { class: "field", style: "max-width:320px" },
-          h("label", { for: selectId, text: "目标学习率（数据中的取值）" }),
+          h("label", { for: selectId, text: profile.targetConditionLabel }),
           select,
         ),
       );

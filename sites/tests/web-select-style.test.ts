@@ -82,9 +82,9 @@ test("暗色主题提供下拉栏表面、边框与松绿强调色令牌", () =>
 
 test("全部原生下拉栏入口均由同一全局 select 规则覆盖", () => {
   const selectEntries = [...js.matchAll(/h\("select"/g)];
-  assert.equal(selectEntries.length, 14);
+  assert.equal(selectEntries.length, 15);
   const selectDeclarations = [
-    "newProjectType", "model-select-${service.id}", "paperPage", "accuracyUnit",
+    "newProjectType", "editProjectType", "model-select-${service.id}", "paperPage", "accuracyUnit",
     "baselineRunId", "targetRunId", "selectId", "targetLr",
     "researchItemStatus", "researchResultConclusion", "paperEvidenceKind",
     "paperEvidencePaper", "scopeSelect", "versionSelect",
@@ -96,7 +96,7 @@ test("全部原生下拉栏入口均由同一全局 select 规则覆盖", () => 
     }), `缺少下拉栏 ${name}`);
   }
   const declaredIds = [
-    "newProjectType", "model-select-${service.id}", "paperPage", "unitId",
+    "newProjectType", "editProjectType", "model-select-${service.id}", "paperPage", "unitId",
     "baselineId", "targetId", "selectId",
     "researchItemStatus", "researchResultConclusion", "paperEvidenceKind",
     "paperEvidencePaper", "scopeSelect", "versionSelect",
