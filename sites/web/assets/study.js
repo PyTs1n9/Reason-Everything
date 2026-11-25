@@ -43,7 +43,14 @@ import {
   sidebarWidthFromKey,
 } from "./gen/src/web/sidebar.js";
 import { codePointSlice, locate } from "./gen/src/core/grounding.js";
-import { extractPaperPages, generatePaperCandidates, verifyPaperQuote, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
+import {
+  extractPaperPages,
+  extractPaperTitleFromPage,
+  generatePaperCandidates,
+  verifyPaperQuote,
+  PAPER_MODEL_PATH,
+  readPdfMetadataTitle,
+} from "./gen/src/web/paper-study.js";
 import { locateInRegions, locateInTextItems } from "./gen/src/web/paper-locate.js";
 import { pagesNeedingOcr, paperPageSource, readOcrRequest, requestPaperOcr, toPaperRegions } from "./gen/src/web/paper-ocr.js";
 import { createAgentService } from "./gen/src/agent/service.js";
@@ -1216,16 +1223,20 @@ async function importPdfFile(file, trigger, restore = null) {
     });
     let pages;
     let metaTitle = "";
+    let layoutTitle = "";
     try {
       const pdf = await task.promise;
       const meta = await pdf.getMetadata();
-      metaTitle = String(meta?.info?.Title ?? "").trim();
+      metaTitle = readPdfMetadataTitle(meta);
       pages = await extractPaperPages(pdf);
+      if (!metaTitle && !restore?.meta?.title) {
+        layoutTitle = await extractPaperTitleFromPage(pdf);
+      }
     } finally {
       await task.destroy();
     }
     const textChars = pages.reduce((sum, text) => sum + Array.from(text).length, 0);
-    const title = restore?.meta?.title || extractPaperTitle({ metaTitle, firstPageText: pages[0] ?? "" });
+    const title = restore?.meta?.title || extractPaperTitle({ metaTitle, firstPageText: layoutTitle || pages[0] || "" });
     const paper = {
       filename: file.name,
       pages,

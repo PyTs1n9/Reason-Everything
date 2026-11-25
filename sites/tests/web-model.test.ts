@@ -357,12 +357,13 @@ test("类型配色：六类型固定色，字典外归「其他」灰", () => {
   assert.equal(typeColorClass(""), "type-other");
 });
 
-test("PDF 题名：元数据优先，退回首页非空行，均无返回空串且截断 120 字", () => {
+test("PDF 题名：元数据优先，退回首页非空行，均无返回空串且保留完整长题名", () => {
   assert.equal(extractPaperTitle({ metaTitle: "  论文标题  ", firstPageText: "首行" }), "论文标题");
   assert.equal(extractPaperTitle({ metaTitle: "", firstPageText: "\n  \n  Real Title\nRest" }), "Real Title");
   assert.equal(extractPaperTitle({}), "");
   assert.equal(extractPaperTitle({ metaTitle: "", firstPageText: "   \n\n" }), "");
-  assert.equal(extractPaperTitle({ metaTitle: "x".repeat(200) }).length, 120);
+  assert.equal(extractPaperTitle({ metaTitle: "题".repeat(200) }), "题".repeat(200));
+  assert.equal(extractPaperTitle({ metaTitle: "x".repeat(600) }).length, 500);
 });
 
 test("卡片羽毛：同一项目稳定复现，不同项目产生随机配色与轻微几何变化", () => {

@@ -462,3 +462,10 @@
 - **离线测试**：`web-model.test.ts` 新增领域精确匹配、全部/其他边界与搜索组合，`web-workbench-tools.test.ts` 新增接线、水晶材质、响应式与降级断言；定向测试 **57/57 pass、exit 0**。仅含本卡补丁的隔离快照 `npm test` = **334/334 pass、fail 0、exit 0**；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js` 均 exit 0。
 - **浏览器实测（127.0.0.1:8350，真实 IndexedDB）**：两个临时项目验证默认全部 2 个、人工智能 1 个、搜索「视觉」后仍为 1 个、搜索与计算机科学组合为 0 个、清空搜索后计算机科学 1 个、切回全部恢复 2 个；刷新后类别保留且筛选重置为全部。1440/1024/390/320px 同源 iframe 均无横向溢出，分类栏位于工具条下方，按钮高度分别为 30/30/44/44px。临时项目、类型元数据、浏览器页与服务已清理；控制台出现一条与本卡无关的 `/api/local-library` 500。
 - **全量回归与限制**：当前混合工作区 `npm test` = **338/339 pass、exit 1**，唯一失败为既有 `web-paper-compare.test.ts:42` 旧证据路由正则，不属于本卡且未修改。内置浏览器视口为 0×0，交互由真实 DOM 事件与 iframe 计算样式验证，未声称物理点击或可见截图验收；真实模型未测，`tsc` 未跑（依赖冻结）。**本次没做**：未改业务 schema、实验计算、模型服务、依赖、站点访问范围或其他并行成果；Sites 当前账号无可用绑定，未执行平台发布，Git 交付结果在回执中报告。
+
+## 卡 R17 · PDF 导入题名改为论文真实标题（2026-11-25）
+
+- **交付**：PDF 题名优先读取 XMP `dc:title`，其次读取 Info `Title`；两者缺失时按首页文字字号提取连续标题块，避开页眉、作者、摘要和正文，最后才退回首页首行。题名上限由 120 提升到页面已支持的 500 字，解析弹窗与新建项目名继续使用同一标题值，不改变文献或项目存储契约。
+- **离线测试**：`web-model.test.ts` 补充长题名边界；`paper-study.test.ts` 新增 XMP/Info、多行标题块和长标题占比三例；`web-paper-ocr.test.ts` 补接线断言。HEAD + 本卡补丁的隔离快照定向测试 = **40/40 pass、exit 0**，完整 `npm test` = **337/337 pass、fail 0、exit 0**；`npm run build:web`、`npm run verify:flow`、`node --check web/assets/study.js`、`node --check scripts/serve-web.mjs`、卡范围 `git diff --check` 均 exit 0。
+- **浏览器实测（127.0.0.1:8711，真实 IndexedDB + PDF.js）**：临时生成 Info、XMP、无元数据三份单页 PDF，导入弹窗题名依次为「Metadata Paper Title」「XMP Paper Title」「Layout Extracted Paper Title」；前两份进入新建项目弹窗时项目名同步预填，第三份确认创建后项目主标题与文献次要信息均为完整标题。验收后删除临时项目、浏览器页、服务、路径配置和 PDF 夹具。
+- **限制**：内置浏览器视口为 0×0，指针点击不可用；实际上传、PDF.js 解析、DOM 事件与 IndexedDB 读回已核验，未声称物理点击或可见截图。真实模型未测，`tsc` 未跑（依赖冻结）。**本次没做**：未改 OCR、阅读器、业务 schema、模型服务、依赖、发布、站点访问范围或其他并行未提交成果。

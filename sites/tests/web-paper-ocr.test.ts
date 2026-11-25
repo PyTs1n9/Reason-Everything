@@ -13,6 +13,10 @@ test("PDF 导入保留原字节与逐页识别状态，扫描页必须先保存�
   assert.match(study, /pageErrors:\s*pages\.map\(\(\)\s*=>\s*""\)/);
   assert.match(study, /pageRegions:\s*pages\.map\(\(\)\s*=>\s*\[\]\)/);
   assert.match(study, /const bytes = new Uint8Array\(buffer\);/);
+  assert.match(study, /metaTitle = readPdfMetadataTitle\(meta\)/);
+  assert.match(study, /layoutTitle = await extractPaperTitleFromPage\(pdf\)/);
+  assert.match(study, /firstPageText: layoutTitle \|\| pages\[0\] \|\| ""/);
+  assert.match(study, /openCreateProjectModal\(trigger, \{ prefillName: nextName, paper: nextPaper/);
   assert.match(study, /await localLibrary\.savePaper\([^;]+\);\s*openImportResultModal\(\{\s*file,\s*bytes,/s);
   assert.match(study, /const ocrOptIn = h\("input",\s*\{\s*type:\s*"checkbox"/);
   assert.doesNotMatch(study, /ocrOptIn[^\n]*checked:\s*true/);

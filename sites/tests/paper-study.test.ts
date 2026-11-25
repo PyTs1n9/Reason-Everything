@@ -6,7 +6,7 @@ import { createModelConfigService } from "../src/web/model-config.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH, type PaperSource } from "../src/web/paper-study.ts";
+import { extractPaperPages, extractPaperTitleFromPage, generatePaperCandidates, PAPER_MODEL_PATH, readPdfMetadataTitle, type PaperSource } from "../src/web/paper-study.ts";
 
 const intro = "The study used a single supervised corpus.";
 const limitation = "The results were observed only on short documents.";
@@ -38,6 +38,51 @@ test("PDF 提取读至末页，保留空页和原文行间断行", async () => {
     },
   });
   assert.deepEqual(pages, paper.pages);
+});
+
+test("PDF 题名读取 XMP 与 Info 元数据，支持多语言标题值", () => {
+  const metadata = {
+    info: { Title: "旧版题名" },
+    metadata: { get: (name: string) => name === "dc:title" ? [{ value: "XMP 论文题名" }] : undefined },
+  };
+  assert.equal(readPdfMetadataTitle(metadata), "XMP 论文题名");
+  assert.equal(readPdfMetadataTitle({ info: { Title: "  Info 论文题名  " } }), "Info 论文题名");
+  assert.equal(readPdfMetadataTitle({}), "");
+});
+
+test("PDF 无元数据时按首页字号提取完整标题块，不抓取页眉或作者", async () => {
+  const items = [
+    { str: "Journal of Synthetic Studies", transform: [8, 0, 0, 8, 50, 800] },
+    { str: "A Multiline", transform: [18, 0, 0, 18, 50, 740], hasEOL: true },
+    { str: "Paper Title", transform: [18, 0, 0, 18, 50, 720], hasEOL: true },
+    { str: "Alice Smith", transform: [10, 0, 0, 10, 50, 690], hasEOL: true },
+    { str: "Abstract", transform: [10, 0, 0, 10, 50, 660], hasEOL: true },
+    { str: "This is body text rather than the paper title.", transform: [10, 0, 0, 10, 50, 640] },
+  ];
+  const title = await extractPaperTitleFromPage({
+    async getPage(page: number) {
+      assert.equal(page, 1);
+      return { getTextContent: async () => ({ items }) };
+    },
+  });
+  assert.equal(title, "A Multiline Paper Title");
+});
+
+test("长标题不会因字符数占比高被误判为正文", async () => {
+  const title = "A very long paper title ".repeat(8).trim();
+  const items = [
+    { str: title, transform: [18, 0, 0, 18, 50, 740], hasEOL: true },
+    { str: "Alice Smith", transform: [10, 0, 0, 10, 50, 700], hasEOL: true },
+    { str: "Abstract", transform: [10, 0, 0, 10, 50, 670], hasEOL: true },
+    { str: "Body line one.", transform: [10, 0, 0, 10, 50, 640], hasEOL: true },
+    { str: "Body line two.", transform: [10, 0, 0, 10, 50, 610] },
+  ];
+  const extracted = await extractPaperTitleFromPage({
+    async getPage() {
+      return { getTextContent: async () => ({ items }) };
+    },
+  });
+  assert.equal(extracted, title);
 });
 
 test("模型读取全文并保留 PDF 物理页码，候选引文回存该页原文", async () => {

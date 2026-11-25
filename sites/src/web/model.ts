@@ -309,15 +309,15 @@ export function cardFeatherVariant(seed: string): CardFeatherVariant {
   };
 }
 
-/** PDF 题名：元数据优先，退回全文首行；均无则空串（不猜题名）。 */
+/** PDF 题名：元数据优先，退回首页首行；均无则空串（不猜题名）。 */
 export function extractPaperTitle(input: { metaTitle?: string; firstPageText?: string }): string {
   const meta = (input.metaTitle ?? "").trim();
-  if (meta) return meta.slice(0, 120);
+  if (meta) return meta.slice(0, 500);
   const line = (input.firstPageText ?? "")
     .split(/\r?\n/)
     .map((part) => part.trim())
     .find((part) => part.length > 0);
-  return line ? line.slice(0, 120) : "";
+  return line ? line.slice(0, 500) : "";
 }
 
 // ---------- 顶栏保存模式信息（卡 18：「本机保存」点击弹层） ----------
