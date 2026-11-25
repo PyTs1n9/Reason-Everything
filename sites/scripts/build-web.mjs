@@ -34,6 +34,8 @@ const sources = [
   "src/web/paper-study.ts",
   "src/web/model-adapter.ts",
   "src/web/model-config-path.ts",
+  "src/web/local-library-path.ts",
+  "src/web/local-library-client.ts",
 ];
 
 for (const rel of sources) {

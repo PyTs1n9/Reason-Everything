@@ -1,6 +1,6 @@
 // 本地静态服务：根 = sites/，模型配置与密钥仅保存在本机服务端。
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { extname, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,8 @@ import { handlePaperModel } from "../src/web/paper-model-api.mjs";
 import { handlePaperOcr } from "../src/web/paper-ocr-api.mjs";
 import { PAPER_MODEL_PATH } from "../src/web/paper-study.ts";
 import { PAPER_OCR_PATH } from "../src/web/paper-ocr.ts";
+import { createLocalLibraryService, handleLocalLibrary } from "../src/web/local-library.ts";
+import { LOCAL_LIBRARY_PATH, LOCAL_LIBRARY_SETTINGS_FILE } from "../src/web/local-library-path.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.argv[2] || 8318);
@@ -17,11 +19,13 @@ const paperOcr = {
   localWindows: process.platform === "win32" && process.env.AGENTFLOW_PAPER_OCR_LOCAL !== "0",
   scriptPath: join(root, "scripts", "ocr-windows.ps1"),
 };
-const keyPath = join(root, ".agentflow-model-keys.key");
-if (!existsSync(keyPath)) writeFileSync(keyPath, randomBytes(32).toString("hex"), { mode: 0o600, flag: "wx" });
-const encryptionKey = readFileSync(keyPath, "utf8").trim();
 const localToken = randomBytes(24).toString("hex");
-const modelService = createModelConfigService({ filePath: join(root, ".model-keys.json"), encryptionKey });
+const localLibrary = createLocalLibraryService({ root, settingsPath: join(root, LOCAL_LIBRARY_SETTINGS_FILE) });
+let modelService = createModelConfigService({
+  filePath: localLibrary.modelKeyFile,
+  encryptionKey: readFileSync(localLibrary.encryptionKeyFile, "utf8").trim(),
+});
+await modelService.list();
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -79,13 +83,33 @@ createServer(async (req, res) => {
       headers: req.headers,
       ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: Readable.toWeb(req), duplex: "half" }),
     });
-    apiRoute = url.pathname === MODEL_CONFIG_PATH || url.pathname.startsWith(`${MODEL_CONFIG_PATH}/`) || url.pathname === PAPER_MODEL_PATH;
+    apiRoute = url.pathname === MODEL_CONFIG_PATH || url.pathname.startsWith(`${MODEL_CONFIG_PATH}/`) ||
+      url.pathname === PAPER_MODEL_PATH || url.pathname === LOCAL_LIBRARY_PATH || url.pathname.startsWith(`${LOCAL_LIBRARY_PATH}/`);
     if (apiRoute) {
-      const response = url.pathname === PAPER_MODEL_PATH
-        ? await handlePaperModel(request, { encryptionKey, token: localToken }, modelService)
-        : await handleModelConfig(request, { filePath: join(root, ".model-keys.json"), encryptionKey, token: localToken });
+      let response;
+      if (url.pathname === LOCAL_LIBRARY_PATH || url.pathname.startsWith(`${LOCAL_LIBRARY_PATH}/`)) {
+        response = await handleLocalLibrary(request, {
+          token: localToken,
+          validateCredentials: async (paths) => {
+            await createModelConfigService({
+              filePath: paths.modelKeyFile,
+              encryptionKey: readFileSync(paths.encryptionKeyFile, "utf8").trim(),
+            }).list();
+          },
+        }, localLibrary);
+        if (response.ok && request.method === "POST" && url.pathname.replace(/\/+$/, "") === LOCAL_LIBRARY_PATH) {
+          modelService = createModelConfigService({
+            filePath: localLibrary.modelKeyFile,
+            encryptionKey: readFileSync(localLibrary.encryptionKeyFile, "utf8").trim(),
+          });
+        }
+      } else {
+        response = url.pathname === PAPER_MODEL_PATH
+          ? await handlePaperModel(request, { token: localToken }, modelService)
+          : await handleModelConfig(request, { token: localToken }, modelService);
+      }
       res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
+      res.end(Buffer.from(await response.arrayBuffer()));
       return;
     }
     if (path.includes("\0")) {
@@ -98,7 +122,8 @@ createServer(async (req, res) => {
     const rel = relative(root, file);
     const segments = rel.split(/[\\/]/);
     const secretFile = segments.some((part) =>
-      part === ".model-keys.json" || part === ".agentflow-model-keys.key" || part.startsWith(".model-keys.json."));
+      part === ".model-keys.json" || part === ".agentflow-model-keys.key" || part.startsWith(".model-keys.json.") ||
+      part === LOCAL_LIBRARY_SETTINGS_FILE || part.startsWith(`${LOCAL_LIBRARY_SETTINGS_FILE}.`));
     if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || secretFile) {
       res.writeHead(403);
       res.end();
@@ -109,10 +134,10 @@ createServer(async (req, res) => {
     res.end(body);
   } catch (error) {
     if (apiRoute) {
-      console.error("本地模型接口处理失败", error);
+      console.error("本地接口处理失败", error);
       if (!res.headersSent) {
         res.writeHead(500, { "content-type": "application/json", "cache-control": "no-store" });
-        res.end(JSON.stringify({ error: "本地模型接口处理失败，请查看服务端日志" }));
+        res.end(JSON.stringify({ error: "本地接口处理失败，请查看服务端日志" }));
       }
       return;
     }

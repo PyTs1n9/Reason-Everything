@@ -12,7 +12,8 @@ test("PDF 导入保留原字节与逐页识别状态，扫描页必须先保存�
   assert.match(study, /pageSources:\s*pages\.map\(\(text\)\s*=>\s*text\.trim\(\)\s*\?\s*"text"\s*:\s*"pending"\)/);
   assert.match(study, /pageErrors:\s*pages\.map\(\(\)\s*=>\s*""\)/);
   assert.match(study, /pageRegions:\s*pages\.map\(\(\)\s*=>\s*\[\]\)/);
-  assert.match(study, /openImportResultModal\(\{\s*file,\s*bytes:\s*new Uint8Array\(buffer\)/);
+  assert.match(study, /const bytes = new Uint8Array\(buffer\);/);
+  assert.match(study, /await localLibrary\.savePaper\([^;]+\);\s*openImportResultModal\(\{\s*file,\s*bytes,/s);
   assert.match(study, /const ocrOptIn = h\("input",\s*\{\s*type:\s*"checkbox"/);
   assert.doesNotMatch(study, /ocrOptIn[^\n]*checked:\s*true/);
   assert.match(study, /pagesNeedingOcr\(paper\)/);

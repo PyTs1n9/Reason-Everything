@@ -48,6 +48,7 @@ import { pagesNeedingOcr, paperPageSource, readOcrRequest, requestPaperOcr, toPa
 import { createAgentService } from "./gen/src/agent/service.js";
 import { createSameOriginModelAdapter } from "./gen/src/web/model-adapter.js";
 import { MODEL_CONFIG_PATH } from "./gen/src/web/model-config-path.js";
+import { createLocalLibraryClient } from "./gen/src/web/local-library-client.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -62,7 +63,7 @@ async function localToken() {
   if (!localTokenPromise) {
     localTokenPromise = fetch("/__agentflow_local.json", { cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) throw new Error("本地模型服务未启动");
+        if (!response.ok) throw new Error("本机服务未启动，请先运行 node scripts/serve-web.mjs");
         const payload = await response.json();
         if (typeof payload.token !== "string" || !payload.token) throw new Error("本地服务身份信息无效");
         return payload.token;
@@ -108,6 +109,13 @@ async function modelConfigRequest(method, path = "", body) {
   return payload;
 }
 
+const localLibrary = createLocalLibraryClient({
+  getToken: (refresh = false) => {
+    if (refresh) localTokenPromise = null;
+    return localToken();
+  },
+});
+
 // 验收驱动口：生产使用同源模型适配器；测试可注入 mock，输出始终标 mock。
 globalThis.__agentflow = { wfDeps };
 
@@ -123,35 +131,169 @@ const saveModeBtn = document.getElementById("saveMode");
 const saveModePop = document.getElementById("saveModePop");
 saveModeBtn.textContent = LOCAL_STORAGE_LABEL;
 
+let saveModeSeq = 0;
+
 function closeSaveModePop(restoreFocus = false) {
+  saveModeSeq++;
   if (saveModePop.hidden) return;
   saveModePop.hidden = true;
   saveModeBtn.setAttribute("aria-expanded", "false");
   if (restoreFocus) saveModeBtn.focus();
 }
 
+function libraryBytes(size) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function archiveBrowserPdfs() {
+  const projects = await wf.listProjects(ACTOR);
+  const files = [];
+  for (const project of projects) {
+    const studies = await data.listPaperStudies(ACTOR, project.projectId);
+    for (const study of studies) {
+      const file = await data.getPaperFile(ACTOR, project.projectId, study.sha256);
+      if (file) files.push(file);
+    }
+  }
+  const failures = [];
+  for (const file of files) {
+    try {
+      await localLibrary.savePaper(file);
+    } catch (error) {
+      failures.push(`${file.filename}：${error.message}`);
+    }
+  }
+  if (failures.length) throw new Error(failures.join("；"));
+  return files.length;
+}
+
 async function openSaveModePop() {
+  const seq = ++saveModeSeq;
   saveModePop.hidden = false;
   saveModeBtn.setAttribute("aria-expanded", "true");
   clear(saveModePop);
   saveModePop.append(h("p", { class: "aux", text: "读取中…" }));
   try {
     const projects = await wf.listProjects(ACTOR);
+    let library = null;
+    let libraryError = null;
+    try {
+      library = await localLibrary.status();
+    } catch (error) {
+      libraryError = error.message;
+    }
+    if (saveModePop.hidden || seq !== saveModeSeq) return;
     const questionCount = projects.reduce((sum, project) => sum + project.questionCount, 0);
     const info = buildSaveModeInfo({
       adapterLabel: LOCAL_STORAGE_LABEL,
       dbName: DB_NAME,
       projectCount: projects.length,
       questionCount,
+      libraryPath: library?.path,
+      paperCount: library?.paperCount,
+      modelKeyPath: library?.modelKeyFile,
     });
-    if (saveModePop.hidden) return;
     clear(saveModePop);
-    const facts = h("dl");
+    const facts = h("dl", { class: "save-mode-facts" });
     for (const row of info.rows) facts.append(h("dt", { text: row.label }), h("dd", { text: row.value }));
-    saveModePop.append(facts, h("p", { class: "aux save-pop-note", text: info.note }),
-      h("p", { class: "aux save-pop-note", text: "云同步尚未启用；模型配置仅保存在本地服务端，研究数据仍保存在当前浏览器。" }));
+    const chooseBtn = h("button", {
+      class: "btn btn-primary local-library-choose", type: "button", text: library?.configured ? "更改本地文件夹" : "选择本地文件夹",
+      "aria-expanded": "false", "aria-controls": "localLibraryForm",
+    });
+    const pathInput = h("input", {
+      type: "text", id: "localLibraryPath", value: library?.path ?? "", autocomplete: "off", spellcheck: "false",
+      placeholder: "如：D:\\Research\\研论书屋", "aria-label": "本地知识库绝对路径",
+    });
+    const browseBtn = h("button", { class: "btn", type: "button", id: "localLibraryBrowse", text: "浏览…" });
+    const formError = h("p", { class: "field-error", role: "alert", hidden: true });
+    const formStatus = h("p", { class: "aux", role: "status", text: "PDF 原件存入 papers/，加密模型密钥存入 secrets/。" });
+    const form = h("form", { class: "local-library-form", id: "localLibraryForm", hidden: true },
+      h("label", { for: pathInput.id, text: "文件夹绝对路径" }),
+      h("div", { class: "local-library-path-row" }, pathInput, browseBtn),
+      h("p", { class: "aux", text: "路径只发送到本机 Node 服务。首次选择会迁移当前模型凭据，并归档浏览器中已有的 PDF 原件。" }),
+      formStatus,
+      formError,
+      h("button", { class: "btn btn-primary", type: "submit", text: "保存到此文件夹" }),
+    );
+    const submit = form.querySelector("button[type=submit]");
+    submit.id = "localLibrarySave";
+    chooseBtn.addEventListener("click", () => {
+      form.hidden = !form.hidden;
+      chooseBtn.setAttribute("aria-expanded", String(!form.hidden));
+      if (!form.hidden) pathInput.focus();
+    });
+    browseBtn.addEventListener("click", async () => {
+      browseBtn.disabled = true;
+      formError.hidden = true;
+      formStatus.textContent = "正在打开本机文件夹选择器…";
+      try {
+        const path = await localLibrary.browse();
+        if (path) {
+          pathInput.value = path;
+          formStatus.textContent = "已选择文件夹，点击「保存到此文件夹」确认。";
+        } else {
+          formStatus.textContent = "已取消选择，可手动输入绝对路径。";
+        }
+      } catch (error) {
+        formError.hidden = false;
+        formError.textContent = error.message;
+      } finally {
+        browseBtn.disabled = false;
+      }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      formError.hidden = true;
+      browseBtn.disabled = true;
+      submit.disabled = true;
+      formStatus.textContent = "正在保存文件夹并归档现有 PDF…";
+      try {
+        const selected = await localLibrary.select(pathInput.value);
+        pathInput.value = selected.path;
+        const count = await archiveBrowserPdfs();
+        formStatus.textContent = `已归档 ${count} 个浏览器 PDF 原件。`;
+        await openSaveModePop();
+        toast("本地知识库文件夹已保存", "ok");
+      } catch (error) {
+        formError.hidden = false;
+        formError.textContent = error.message;
+        formStatus.textContent = "可检查路径后重试；已有文件不会被覆盖。";
+      } finally {
+        browseBtn.disabled = false;
+        submit.disabled = false;
+      }
+    });
+    const paperList = h("div", { class: "local-library-papers", "aria-label": "本地知识库 PDF" });
+    if (!library?.papers.length) {
+      paperList.append(h("p", { class: "aux", text: libraryError ? "本地知识库暂不可读" : "还没有归档 PDF，导入后会自动保存。" }));
+    } else {
+      for (const paper of library.papers.slice(0, 20)) {
+        const reuseBtn = h("button", { class: "btn btn-small", type: "button", text: "取回" });
+        reuseBtn.addEventListener("click", async () => {
+          closeSaveModePop();
+          try {
+            const blob = await localLibrary.readPaper(paper.sha256);
+            await importPdfFile(new File([blob], paper.filename, { type: "application/pdf" }), saveModeBtn);
+          } catch (error) {
+            toast(`取回失败：${error.message}`, "bad");
+          }
+        });
+        paperList.append(h("div", { class: "local-library-paper" },
+          h("div", {},
+            h("strong", { text: paper.filename }),
+            h("span", { class: "aux", text: `${libraryBytes(paper.size)} · ${new Date(paper.savedAt).toLocaleDateString("zh-CN")}` }),
+          ),
+          reuseBtn,
+        ));
+      }
+      if (library.papers.length > 20) paperList.append(h("p", { class: "aux", text: `仅显示最近 20 篇，共 ${library.papers.length} 篇。` }));
+    }
+    if (libraryError) saveModePop.append(h("p", { class: "field-error", text: `本地知识库读取失败：${libraryError}` }));
+    saveModePop.append(facts, h("p", { class: "aux save-pop-note", text: info.note }), chooseBtn, form, paperList);
   } catch (error) {
-    if (saveModePop.hidden) return;
+    if (saveModePop.hidden || seq !== saveModeSeq) return;
     clear(saveModePop);
     saveModePop.append(
       h("p", { class: "field-error", text: `读取失败：${error && error.message ? error.message : String(error)}` }),
@@ -1027,6 +1169,7 @@ async function importPdfFile(file, trigger, restore = null) {
     return;
   }
   if (trigger) trigger.disabled = true;
+  let phase = "解析";
   toast(`正在本地解析：${file.name}`);
   try {
     const buffer = await file.arrayBuffer();
@@ -1060,9 +1203,12 @@ async function importPdfFile(file, trigger, restore = null) {
       pageErrors: pages.map(() => ""),
       pageRegions: pages.map(() => []),
     };
-    openImportResultModal({ file, bytes: new Uint8Array(buffer), paper, textChars, title, sha256, trigger, restore });
+    const bytes = new Uint8Array(buffer);
+    phase = "保存到本地知识库";
+    await localLibrary.savePaper({ filename: file.name, sha256, bytes });
+    openImportResultModal({ file, bytes, paper, textChars, title, sha256, trigger, restore });
   } catch (error) {
-    toast(`解析失败：${error && error.message ? error.message : String(error)}`, "bad");
+    toast(`${phase}失败：${error && error.message ? error.message : String(error)}`, "bad");
   } finally {
     if (trigger) trigger.disabled = false;
   }
@@ -1724,7 +1870,7 @@ async function renderModels() {
     ),
     h("div", { class: "notice", role: "note" },
       h("strong", { text: "支持本机与云 API" }),
-      h("p", { text: "支持本机 HTTP 和公网 HTTPS 云 API，私网与保留地址仍被阻止。API Key 加密保存在运行工作台的本机服务端，不会回传到浏览器；研究数据仍保存在当前浏览器。" }),
+      h("p", { text: "支持本机 HTTP 和公网 HTTPS 云 API，私网与保留地址仍被阻止。API Key 加密保存在「本机保存」所选文件夹的 secrets/ 中；未选择时使用站点默认本机目录。密钥不会回传到浏览器，研究数据仍保存在当前浏览器。云同步尚未启用。" }),
     ),
     status,
     addPanel,

@@ -17,21 +17,28 @@ function ruleBody(source: string, selector: string): string {
   return source.slice(open + 1, close);
 }
 
-test("弹层内容如实：存储方式/数据库/当前数据/云端未接入 + 同步边界说明", () => {
+test("弹层内容如实：浏览器数据、本地知识库、PDF/密钥位置与云端边界", () => {
   const info = buildSaveModeInfo({
     adapterLabel: "本机保存",
     dbName: "agentflow-study",
     projectCount: 3,
     questionCount: 7,
+    libraryPath: "D:\\Research\\研论书屋",
+    paperCount: 2,
+    modelKeyPath: "D:\\Research\\研论书屋\\secrets\\.model-keys.json",
   });
   assert.deepEqual(info.rows, [
     { label: "存储方式", value: "本机保存（IndexedDB）" },
     { label: "数据库", value: "agentflow-study" },
     { label: "当前数据", value: "3 个项目 · 7 个研究问题" },
+    { label: "本地知识库", value: "D:\\Research\\研论书屋" },
+    { label: "PDF 原件", value: "2 篇（papers/）" },
+    { label: "模型密钥", value: "D:\\Research\\研论书屋\\secrets\\.model-keys.json" },
     { label: "云端同步", value: "未接入" },
   ]);
   assert.match(info.note, /不跨设备同步/);
   assert.match(info.note, /清除浏览器站点数据/);
+  assert.match(info.note, /长期保存 PDF 原件与加密模型密钥/);
   assert.doesNotMatch(JSON.stringify(info), /已接入|已同步到云端/);
 });
 
@@ -41,9 +48,12 @@ test("空库计数如实为 0，不省略行", () => {
     dbName: "agentflow-study",
     projectCount: 0,
     questionCount: 0,
+    paperCount: 0,
   });
   assert.equal(info.rows.find((row) => row.label === "当前数据")!.value, "0 个项目 · 0 个研究问题");
-  assert.equal(info.rows.length, 4);
+  assert.equal(info.rows.length, 7);
+  assert.equal(info.rows.find((row) => row.label === "本地知识库")!.value, "未选择（点下方按钮设置）");
+  assert.equal(info.rows.find((row) => row.label === "PDF 原件")!.value, "未选择文件夹");
 });
 
 test("HTML 接线：保存模式为按钮，带 aria-expanded/aria-controls，弹层默认收起", () => {
@@ -71,7 +81,8 @@ test("CSS：弹层绝对定位不越界、[hidden] 显式 display:none（防 dis
   const pop = ruleBody(css, ".save-mode-pop {");
   assert.match(pop, /position:\s*absolute/);
   assert.match(pop, /right:\s*0/);
-  assert.match(pop, /width:\s*min\(320px,\s*calc\(100vw - 32px\)\)/, "弹层宽度须受视口约束");
+  assert.match(pop, /width:\s*min\(400px,\s*calc\(100vw - 32px\)\)/, "弹层宽度须受视口约束");
+  assert.match(pop, /max-height:\s*calc\(100dvh - 80px\)/);
   // 卡 15/16 同类教训：自定义 display 会覆盖 [hidden] 的 UA 样式
   const hidden = ruleBody(css, ".save-mode-pop[hidden]");
   assert.match(hidden, /display:\s*none/);

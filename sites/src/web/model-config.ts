@@ -3,9 +3,10 @@ import { readFileSync, renameSync, writeFileSync, mkdirSync, statSync } from "no
 import { dirname, join } from "node:path";
 
 import { MODEL_CONFIG_PATH } from "./model-config-path.ts";
+import { MODEL_KEY_FILENAME } from "./local-library-path.ts";
 
 export { MODEL_CONFIG_PATH };
-const MODEL_KEY_FILE = ".model-keys.json";
+const MODEL_KEY_FILE = MODEL_KEY_FILENAME;
 export const KEY_FILE_MODE = 0o600;
 const MAX_KEY_BYTES = 256 * 1024;
 const MAX_SERVICES = 20;
@@ -435,10 +436,10 @@ export function createModelConfigService(options: ModelConfigDeps = {}) {
 export async function handleModelConfig(
   request: Request,
   options: ModelConfigDeps & { token?: string } = {},
+  service = createModelConfigService(options),
 ): Promise<Response> {
   const authError = authorizeLocalModelRequest(request, options.token);
   if (authError) return authError;
-  const service = createModelConfigService(options);
   const url = new URL(request.url);
   const route = url.pathname.replace(/\/+$/, "");
   try {

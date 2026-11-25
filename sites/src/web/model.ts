@@ -305,15 +305,14 @@ export interface SaveModeInfo {
   note: string;
 }
 
-/**
- * 顶栏「本机保存」弹层内容：如实说明存储适配器、库名、当前数据量与同步边界。
- * 当前产品只有 IndexedDB 本机适配器，云端状态如实写「未接入」。
- */
 export function buildSaveModeInfo(input: {
   adapterLabel: string;
   dbName: string;
   projectCount: number;
   questionCount: number;
+  libraryPath?: string;
+  paperCount?: number;
+  modelKeyPath?: string;
 }): SaveModeInfo {
   return {
     rows: [
@@ -323,9 +322,15 @@ export function buildSaveModeInfo(input: {
         label: "当前数据",
         value: `${input.projectCount} 个项目 · ${input.questionCount} 个研究问题`,
       },
+      { label: "本地知识库", value: input.libraryPath || "未选择（点下方按钮设置）" },
+      {
+        label: "PDF 原件",
+        value: input.paperCount === undefined || !input.libraryPath ? "未选择文件夹" : `${input.paperCount} 篇（papers/）`,
+      },
+      { label: "模型密钥", value: input.modelKeyPath || "未选择文件夹" },
       { label: "云端同步", value: "未接入" },
     ],
-    note: "数据只保存在当前浏览器，不跨设备同步；清除浏览器站点数据会丢失全部项目与分析。",
+    note: "项目与分析仍只保存在当前浏览器，不跨设备同步；清除浏览器站点数据会丢失项目与分析。所选文件夹长期保存 PDF 原件与加密模型密钥，更换浏览器后可取回 PDF 重新入库。",
   };
 }
 
