@@ -3107,7 +3107,8 @@ h1 .project-title-input[aria-invalid="true"] {
   position: absolute;
   top: 0;
   right: -6px;
-  bottom: 0;
+  height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
   z-index: 5;
   display: flex;
   align-items: center;

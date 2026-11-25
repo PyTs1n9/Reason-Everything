@@ -244,6 +244,10 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   assert.match(collapsedSidebar, /padding-inline:\s*0/);
   assert.match(collapsedSidebar, /visibility:\s*hidden/);
   const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
+  assert.match(resizer, /top:\s*0/);
+  assert.match(resizer, /height:\s*calc\(100vh - 56px\)/);
+  assert.match(resizer, /height:\s*calc\(100dvh - 56px\)/);
+  assert.doesNotMatch(resizer, /bottom:\s*0/);
   assert.match(resizer, /cursor:\s*col-resize/);
   assert.match(resizer, /touch-action:\s*none/);
   assert.match(resizer, /outline:\s*none/);
@@ -272,6 +276,10 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   assert.match(ruleBody(sidebarCss, ".sidebar-leaf-layer"), /pointer-events:\s*none/);
   assert.match(sidebarCss, /@keyframes sidebar-leaf-fall/);
   assert.match(sidebarCss, /animation:\s*sidebar-leaf-fall 1100ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+});
+
+test("CSS：阅读路由不额外下移侧栏，原版与文字重排共享同一把手位置", () => {
+  assert.doesNotMatch(css, /body:has\(\.reader-layout\) \.sidebar\s*\{[^}]*top:/);
 });
 
 test("CSS：窄屏隐藏把手与按钮文字，减少动效偏好降级", () => {
