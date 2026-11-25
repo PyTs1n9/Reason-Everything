@@ -108,7 +108,7 @@ test("状态区分：未接通为中性（步骤/提示），失败仍为红色�
   assert.ok(js.includes('class: unavailable ? "notice" : "notice notice-error"'), "AI 未完成提示按状态分样式");
   assert.ok(js.includes('AI 未接通（模型服务未配置）'));
   assert.ok(js.includes("disabled: unavailable"), "未接通时重试按钮禁用");
-  assert.ok(js.includes("模型服务未接通：需先在站点接入模型服务，重试才会生效。"));
+  assert.ok(js.includes("配置并选择模型后返回此处，重试模型分析才会生效。"), "未接通提示引导配置后重试");
   const stepUnavailable = ruleBody(css, ".step-unavailable {");
   assert.match(stepUnavailable, /color:\s*var\(--meta-ink\)/, "未接通步骤用中性色，不用红");
 });
