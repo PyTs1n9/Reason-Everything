@@ -265,7 +265,7 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   const hitWidth = Number(readyResizer.match(/width:\s*(\d+)px/)?.[1]);
   assert.equal(hitWidth, 136);
   assert.ok(treeWidth - hitWidth > 0 && treeWidth - hitWidth <= 16, "命中区应略窄于树木贴图");
-  assert.match(readyResizer, /right:\s*-28px/);
+  assert.match(readyResizer, /right:\s*-64px/);
   const readyTree = ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image");
   assert.match(readyTree, /display:\s*block/);
   assert.match(readyTree, /right:\s*-4px/);

@@ -314,3 +314,11 @@
 - **本机 HTTP 安全实测**：根路径 302；非回环 Host 403；无本地令牌 401；跨 Origin 403；`.model-keys.json`、`.agentflow-model-keys.key`、`.model-keys.json.tmp` 静态读取均 403；合法令牌读取配置 200。
 - **验收命令**：`cd sites && npm test` = **247/247 pass、fail 0、exit 0**；`npm run verify:flow` = 全部离线场景通过（⑦ 真实模型未测单列）、exit 0；`npm run build:web` = exit 0；`node --check web/assets/study.js` = exit 0；`git diff --check` 与 `git diff --cached --check` = exit 0。
 - **未测/受限**：未使用真实 API Key 或真实模型，真实模型输出质量与额度未验证；Windows 不完整实现 POSIX 权限位，凭据文件由本机账户与目录权限保护；直接双击静态 HTML 可浏览已有研究数据，但安全保存密钥和调用模型仍需运行 `node scripts/serve-web.mjs`；`tsc` 未跑（依赖冻结）。**下一卡**：25（或用户指定）。
+
+## 卡 R9 · 森林侧栏无缝衔接与树木分界对齐（2026-11-25）
+
+- **交付**：有项目时森林 WebP 从侧栏边界扩展到整个 `.shell`，连续覆盖侧栏与主页；桌面侧栏改为由 94% 不透明度向左、82% 至 70% 处再向右淡出的遮罩，并提升到内容之上，保证分界命中区不被卡片遮挡。桌面内容增加 72px 左内边距，为右移后的树木预留空间；≤1199px 抽屉与 ≤767px 手机布局不受影响。树木命中区从 `right: -28px` 移至 `-64px`，144px 贴图仍相对 136px 命中区各内缩 4px。减少透明度、强制颜色与打印模式恢复纯色侧栏。
+- **离线测试**：新增 `tests/web-sidebar-forest.test.ts` 3 项，覆盖 WebP 签名、满壳底图、桌面层级/渐隐/留白、136/144px 几何关系及窄屏和无障碍降级；`web-sidebar.test.ts` 同步断言 `-64px`。隔离快照定向测试 = **15/15 pass、exit 0**，完整 `npm test` = **250/250 pass、exit 0**。
+- **浏览器实测（隔离快照 127.0.0.1:8379，Headless Chrome + CDP，真实 IndexedDB）**：默认 248px 与拖动后 320px 两档中，树木分别位于分界两侧 `-76/+68px`，分界及左右各 8px 均命中 `.sidebar-resizer`，卡片与命中区保留 8px 间隙。CDP 指针拖动 248→320px 时生成落叶，松开后持久化，刷新仍为 320；左右键、Home/End、未知键与拖动中 Escape 均通过。1024px 和 390px 抽屉宽 260px、把手隐藏、Escape/链接关闭后回焦；手机按钮 44px、内容左内边距 16px、无横向溢出。深浅色底图透明度为 0.46/0.14，手机为 0.28；减少透明度与强制颜色均隐藏底图并恢复纯色侧栏。控制台 error/warn 均为 0，深浅色与手机截图已目视核对。
+- **验收命令**：`node --test tests/web-sidebar-forest.test.ts tests/web-sidebar.test.ts`、`npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。
+- **未测/受限**：CDP 输入为自动化浏览器事件，未声称物理鼠标验收；真实模型与云存储未测，`tsc` 未跑（依赖冻结）。当前混合工作区 `npm test` = **300/302 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧模型提示文案与旧根路径条件断言。**本次没做**：未修既有失败、未改业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他并行未提交成果。
