@@ -594,14 +594,13 @@ async function renderProjects() {
     type: "search",
     id: "projectSearch",
     name: "search",
-    placeholder: "搜索项目（Ctrl K）",
+    placeholder: "搜索项目",
     autocomplete: "off",
-    "aria-label": "搜索项目，快捷键 Ctrl K",
+    "aria-label": "搜索项目",
   });
   const searchBox = h("div", { class: "search-box workbench-search" },
     icon(ICON_SEARCH),
     searchInput,
-    h("kbd", { class: "search-kbd", "aria-hidden": "true", text: "Ctrl K" }),
   );
   const newProjectBtn = h("button", {
     class: "btn btn-new-project",
@@ -894,13 +893,6 @@ async function renderProjects() {
   allProjects = await wf.listProjects(ACTOR);
   if (seq !== projectListSeq) return;
   await updateGrid();
-
-  // Ctrl K：从其他视图跳回项目列表后聚焦搜索框
-  if (pendingSearchFocus) {
-    pendingSearchFocus = false;
-    searchInput.focus();
-    searchInput.select();
-  }
 }
 
 /** 居中新建项目弹窗：项目名 + 项目类型；Escape/遮罩关闭，焦点限制在弹窗内。
@@ -1981,25 +1973,6 @@ async function renderModels() {
 
   await reload();
 }
-
-/** Ctrl K 全局快捷键：任意视图聚焦项目搜索（不在项目列表则先跳回）。 */
-let pendingSearchFocus = false;
-
-window.addEventListener("keydown", (event) => {
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
-  const active = document.activeElement;
-  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
-  event.preventDefault();
-  const input = document.getElementById("projectSearch");
-  if (input) {
-    input.focus();
-    input.select();
-    return;
-  }
-  pendingSearchFocus = true;
-  if (location.hash === "#/" || location.hash === "") render();
-  else location.hash = "#/";
-});
 
 // ---------- 视图 2：项目详情 ----------
 

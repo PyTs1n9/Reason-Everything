@@ -36,6 +36,15 @@ test("搜索与右上角操作同属一个可访问工具条，计数并入最�
   assert.match(ruleBody(".workbench-list-head[hidden]"), /display:\s*none/);
 });
 
+test("项目搜索移除 Ctrl K 提示与快捷键，仅保留输入和 Escape 清空", () => {
+  assert.match(js, /placeholder: "搜索项目"/);
+  assert.match(js, /"aria-label": "搜索项目"/);
+  assert.match(js, /searchInput\.addEventListener\("keydown", \(event\) => \{\s*if \(event\.key === "Escape" && searchInput\.value\)/s);
+  assert.doesNotMatch(js, /Ctrl K|⌘ K|search-kbd|pendingSearchFocus/);
+  assert.doesNotMatch(js, /event\.key\.toLowerCase\(\) !== "k"/);
+  assert.doesNotMatch(css, /\.search-kbd/);
+});
+
 test("工具条使用半透明玻璃、折射高光与内描边，搜索不再自带重边框", () => {
   const tools = ruleBody(".workbench-tools");
   assert.match(tools, /background:[^;]*radial-gradient[^;]*linear-gradient/s);
@@ -70,7 +79,6 @@ test("桌面保持同级，窄屏工具条内部 stack 且三个操作等宽", (
   assert.match(mobile, /\.workbench-tools \.head-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/s);
   assert.match(mobile, /\.workbench-tools \.search-box input\[type="search"\]\s*\{[^}]*min-height:\s*44px/s);
   assert.match(mobile, /\.workbench-tools \.head-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
-  assert.match(mobile, /\.workbench-tools \.search-kbd\s*\{[^}]*display:\s*none/s);
   assert.match(mediaBody("(max-width: 380px)"), /\.workbench-tools \.head-actions \.btn svg\s*\{[^}]*width:\s*14px/s);
 });
 

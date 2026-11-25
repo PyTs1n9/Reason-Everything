@@ -1684,24 +1684,8 @@ h1 .project-title-input[aria-invalid="true"] {
 
 .search-box input[type="search"] {
   min-height: 44px;
-  padding-right: 64px;
+  padding-right: 12px;
   font-size: 15px;
-}
-
-.search-kbd {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--ink-2);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
-  pointer-events: none;
 }
 
 .btn-new-project {
@@ -2080,10 +2064,6 @@ h1 .project-title-input[aria-invalid="true"] {
     flex: 1 1 100%;
   }
 
-  .search-kbd {
-    display: none;
-  }
-
   .project-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
@@ -2420,24 +2400,7 @@ h1 .project-title-input[aria-invalid="true"] {
 .search-box input[type="search"] {
   min-height: 40px;
   padding-left: 36px;
-  padding-right: 62px;
-}
-
-.search-kbd {
-  position: absolute;
-  right: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 16px;
-  letter-spacing: 0.04em;
-  color: var(--meta-ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 1px 5px;
-  pointer-events: none;
+  padding-right: 12px;
 }
 
 .section-title {
@@ -5656,7 +5619,7 @@ body.sidebar-resizing * {
 .workbench-tools .search-box input[type="search"] {
   min-height: 38px;
   height: 38px;
-  padding: 0 56px 0 34px;
+  padding: 0 12px 0 34px;
   font-size: 13px;
   color: var(--ink);
   background: transparent;
@@ -5678,15 +5641,6 @@ body.sidebar-resizing * {
   border-color: var(--glass-line-strong);
   outline: none;
   box-shadow: 0 0 0 3px var(--glass-focus), inset 0 1px 0 var(--glass-highlight);
-}
-
-.workbench-tools .search-kbd {
-  right: 8px;
-  padding: 0 5px;
-  color: var(--meta-ink);
-  background: var(--glass-control);
-  border-color: var(--glass-line);
-  border-radius: 5px;
 }
 
 .workbench-tools .head-actions {
@@ -5812,10 +5766,6 @@ body.sidebar-resizing * {
     min-height: 44px;
     height: 44px;
     padding-right: 12px;
-  }
-
-  .workbench-tools .search-kbd {
-    display: none;
   }
 
   .workbench-tools .head-actions {
