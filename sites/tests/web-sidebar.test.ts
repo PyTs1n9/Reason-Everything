@@ -140,7 +140,7 @@ test("HTML：研究库按钮常显，分隔条、羽毛与透明 PNG 槽位具�
   assert.match(html, /aria-valuemax="420"/);
   assert.match(html, /class="sidebar-feather-mark" aria-hidden="true"/);
   assert.doesNotMatch(html, /<svg class="sidebar-feather"[\s\S]*?<\/svg>/);
-  assert.match(html, /class="sidebar-tree-image" data-src="\.\/assets\/sidebar-branch-v2\.png"/);
+  assert.match(html, /class="sidebar-tree-image" data-src="\.\/assets\/sidebar-winding-tree\.png"/);
   assert.match(html, /class="sidebar-leaf-source" data-src="\.\/assets\/sidebar-leaf\.png"/);
   assert.doesNotMatch(html, /class="sidebar-feather-image"/);
   assert.match(html, /id="sidebarLeafLayer" aria-hidden="true"/);
@@ -190,7 +190,7 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
 
 test("PNG 素材：三张正式位图具备透明通道、干净边缘与右下角无水印", () => {
   const expected = [
-    ["sidebar-branch-v2.png", 337, 2048],
+    ["sidebar-winding-tree.png", 337, 2048],
     ["sidebar-feather.png", 768, 1024],
     ["sidebar-leaf.png", 1024, 1024],
   ];

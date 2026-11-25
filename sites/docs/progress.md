@@ -469,3 +469,10 @@
 - **离线测试**：`web-model.test.ts` 补充长题名边界；`paper-study.test.ts` 新增 XMP/Info、多行标题块和长标题占比三例；`web-paper-ocr.test.ts` 补接线断言。HEAD + 本卡补丁的隔离快照定向测试 = **40/40 pass、exit 0**，完整 `npm test` = **337/337 pass、fail 0、exit 0**；`npm run build:web`、`npm run verify:flow`、`node --check web/assets/study.js`、`node --check scripts/serve-web.mjs`、卡范围 `git diff --check` 均 exit 0。
 - **浏览器实测（127.0.0.1:8711，真实 IndexedDB + PDF.js）**：临时生成 Info、XMP、无元数据三份单页 PDF，导入弹窗题名依次为「Metadata Paper Title」「XMP Paper Title」「Layout Extracted Paper Title」；前两份进入新建项目弹窗时项目名同步预填，第三份确认创建后项目主标题与文献次要信息均为完整标题。验收后删除临时项目、浏览器页、服务、路径配置和 PDF 夹具。
 - **限制**：内置浏览器视口为 0×0，指针点击不可用；实际上传、PDF.js 解析、DOM 事件与 IndexedDB 读回已核验，未声称物理点击或可见截图。真实模型未测，`tsc` 未跑（依赖冻结）。**本次没做**：未改 OCR、阅读器、业务 schema、模型服务、依赖、发布、站点访问范围或其他并行未提交成果。
+
+## 卡 32 · 还原侧栏树木贴图（2026-11-25）
+
+- **交付**：按用户要求将侧栏拖动条从 `sidebar-branch-v2.png` 还原为原有 `sidebar-winding-tree.png`，删除不再使用的枝叶 PNG；`tests/web-sidebar.test.ts` 的页面接线与正式 PNG 校验同步恢复。拖动、键盘、宽度持久化、落叶、桌面收起与窄屏抽屉逻辑均未改动。
+- **离线测试**：`node --test tests/web-sidebar.test.ts tests/web-sidebar-forest.test.ts` = **15/15 pass、exit 0**；只含本卡改动的隔离快照 `npm test` = **337/337 pass、exit 0**，`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js` 与卡范围 `git diff --check` 均 exit 0。
+- **浏览器实测（隔离快照 127.0.0.1:8375，Headless Chrome + CDP）**：1440×900 下原树木素材加载成功、自然尺寸 337×2048、显示区域 144×876px、命中区 136×844px，替换素材零请求；拖动 248→308px 并生成 2 片落叶，ArrowRight/Home/End 分别到 324/208/420px。390×844 下把手隐藏、研究库按钮 44×44px、抽屉 260px、Escape 关闭并回焦；两档横向溢出均为 0，Runtime 异常为 0，桌面和手机截图已目视核对。
+- **未测/受限**：CDP 输入为自动化浏览器事件，未声称物理鼠标验收；真实模型与云存储未测，`tsc` 未跑（依赖冻结）。**本次没做**：未改业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果；Git 交付结果在回执中报告。
