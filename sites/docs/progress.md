@@ -358,6 +358,18 @@
 - **全量回归**：隔离提交快照 `npm test` = **238/238 pass、exit 0**；当前混合工作区为 **297/299 pass、exit 1**，两项失败与修改前基线相同，均为 `web-ux.test.ts` 的旧模型提示文案与旧根路径条件断言，不属于本卡范围。
 - **未测/受限**：真实模型与云存储未接通；`tsc` 未跑（依赖冻结）。**本次没做**：未修前序既有失败、未改业务 schema、依赖、模型服务、发布、站点访问范围或其他并行未提交成果。
 
+## 卡 24 · 本地模型服务配置（2026-11-25）
+
+- **用户决策**：删除一切云端功能，仅保留当前页面的本地功能；添加服务与删除确认改为页面内交互，不使用浏览器原生弹窗。研究数据继续保存于当前浏览器 IndexedDB，模型凭据改为本机同源 Node 服务端加密保存，未启用托管 Function、数据库、Secret 或存储。
+- **交付**：新增 `src/web/model-config.ts`（AES-256-GCM 凭据文件、多服务保存/读取/更新/删除、active 模型、OpenAI 兼容 `/models` 与 `/chat/completions`、Bearer 鉴权、15s/65s 超时、异常响应映射、回环上游限制、同源与本地令牌校验）、`src/web/model-adapter.ts`（浏览器适配器）和共享 `model-config-path.ts`；`scripts/serve-web.mjs` 只绑定 `127.0.0.1`，增加随机本地令牌、Host/Origin 防护、API 路由与凭据静态路径保护；问题分析与论文候选生成复用同一配置服务。页面新增 `#/models`：页面内添加、卡片展开/收起、API Key 显隐、保存、搜索、模型选择/数量、加载/空/成功/失败状态和卡片内删除二级确认；刷新后恢复当前模型与 Agent 接线。
+- **云端清理**：删除 `src/web/literature.ts`、`tests/literature.test.ts` 及 Crossref 运行时抓取入口；同步移除外部 OCR 上游分支与 URL/Key/Model 环境配置，只保留 Windows 本机 OCR。历史进度记录保留原事实，README、package 描述和验收入口同步改为纯本地模式。
+- **离线测试**：新增 `tests/model-config.test.ts` 8 项与 `tests/web-model-config.test.ts` 3 项，覆盖密文落盘/权限/密钥不回传、多服务 active、URL 规范化、Bearer、空列表、401、网络错误/超时、同源/令牌、本机边界、论文与浏览器适配器复用、损坏凭据如实失败，以及页面内增删改和隐藏状态；OCR 测试改为只调用本机适配器并拒绝外部上游配置；原测试中误夹带的卡 22 多 PDF 断言已恢复为卡 23 基线单 PDF 契约。
+- **浏览器实测（R8 最新远端基线重放快照，headless Chrome + CDP，127.0.0.1:18320，独立本机 mock 上游 19434，全程假密钥、不联网）**：页面内添加 2 个服务→保存/自动展开→API Key 显示后恢复隐藏→搜索返回 `mock-model-a/mock-model-b`→选择模型→401、非 JSON、合法空列表、15s 超时分别显示可理解错误→卡片内确认删除→刷新恢复 active 模型、下拉值与“已选 1 个模型”；浏览器适配器 `parse()` 实际经同源服务调用所选 `mock-model-a` 并返回 mock 内容。原生弹窗计数 0、Runtime 异常 0；localStorage/sessionStorage/Cookie/IndexedDB/页面文本/配置响应均不含完整假密钥；1280×900 与 375×812 截图已生成，窄屏 `scrollWidth=innerWidth=375`。
+- **本机 HTTP 安全实测**：根路径 302；非回环 Host 403；无本地令牌 401；跨 Origin 403；`.model-keys.json`、`.agentflow-model-keys.key`、`.model-keys.json.tmp` 静态读取均 403；合法令牌读取配置 200。
+- **验收命令**：`cd sites && npm test` = **247/247 pass、fail 0、exit 0**；`npm run verify:flow` = 全部离线场景通过（⑦ 真实模型未测单列）、exit 0；`npm run build:web` = exit 0；`node --check web/assets/study.js` = exit 0；`git diff --check` 与 `git diff --cached --check` = exit 0。
+- **未测/受限**：未使用真实 API Key 或真实模型，真实模型输出质量与额度未验证；Windows 不完整实现 POSIX 权限位，凭据文件由本机账户与目录权限保护；直接双击静态 HTML 可浏览已有研究数据，但安全保存密钥和调用模型仍需运行 `node scripts/serve-web.mjs`；`tsc` 未跑（依赖冻结）。**下一卡**：25（或用户指定）。
+
+
 ## 卡 R9 · 森林侧栏无缝衔接与树木分界对齐（2026-11-25）
 
 - **交付**：有项目时森林 WebP 从侧栏边界扩展到整个 `.shell`，连续覆盖侧栏与主页；桌面侧栏改为由 94% 不透明度向左、82% 至 70% 处再向右淡出的遮罩，并提升到内容之上，保证分界命中区不被卡片遮挡。桌面内容增加 72px 左内边距，为右移后的树木预留空间；≤1199px 抽屉与 ≤767px 手机布局不受影响。树木命中区从 `right: -28px` 移至 `-64px`，144px 贴图仍相对 136px 命中区各内缩 4px。减少透明度、强制颜色与打印模式恢复纯色侧栏。
@@ -372,7 +384,7 @@
 - **离线测试**：`web-sidebar.test.ts` 新增视口高度、移除内容相关底边定位及阅读路由不额外偏移的回归断言；隔离 R9 快照定向测试 = **16/16 pass、exit 0**，完整 `npm test` = **251/251 pass、fail 0、exit 0**；当前混合工作区与 `web-reader-layout.test.ts` 联合 = **23/23 pass、exit 0**。
 - **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，临时三页 PDF 与 IndexedDB 演示项目）**：修复前原版/文字重排把手分别为 1485.27/1314.39px，原版连续拖动出现 11 种高度；修复后两模式把手均为 844px、树木均为 876px，原版 147 帧与文字重排 146 帧采样高度均无变化。宽度拖动 208→268px 后持久化并清理拖动状态；ArrowRight、End、Home、桌面收起/恢复、减少动效、1199px 抽屉 Escape 回焦、390px 的 44×44px 按钮均通过，项目列表与阅读器把手位置一致，Runtime 异常与 error 日志为 0，截图已目视核对。
 - **验收命令**：隔离快照 `npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。
-- **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果；独立交付部分在已提交 R9 基线上完成全套测试与构建。
+- **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果；独立交付部分在已提交 R9 基线上完成全套测试与构建。**本次没做**：未改 PDF 重绘策略、业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果。
 
 ## 卡 R11 · 模型服务开放公网云 API（2026-11-25）
 

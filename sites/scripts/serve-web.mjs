@@ -13,18 +13,15 @@ import { PAPER_OCR_PATH } from "../src/web/paper-ocr.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.argv[2] || 8318);
+const paperOcr = {
+  localWindows: process.platform === "win32" && process.env.AGENTFLOW_PAPER_OCR_LOCAL !== "0",
+  scriptPath: join(root, "scripts", "ocr-windows.ps1"),
+};
 const keyPath = join(root, ".agentflow-model-keys.key");
 if (!existsSync(keyPath)) writeFileSync(keyPath, randomBytes(32).toString("hex"), { mode: 0o600, flag: "wx" });
 const encryptionKey = readFileSync(keyPath, "utf8").trim();
 const localToken = randomBytes(24).toString("hex");
 const modelService = createModelConfigService({ filePath: join(root, ".model-keys.json"), encryptionKey });
-const paperOcr = {
-  url: process.env.AGENTFLOW_PAPER_OCR_URL,
-  key: process.env.AGENTFLOW_PAPER_OCR_KEY,
-  model: process.env.AGENTFLOW_PAPER_OCR_MODEL,
-  localWindows: process.platform === "win32" && process.env.AGENTFLOW_PAPER_OCR_LOCAL !== "0",
-  scriptPath: join(root, "scripts", "ocr-windows.ps1"),
-};
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -50,7 +47,8 @@ createServer(async (req, res) => {
       return;
     }
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${req.socket.localPort}`);
-    if (url.pathname === "/__agentflow_local.json") {
+    let path = decodeURIComponent(url.pathname);
+    if (path === "/__agentflow_local.json") {
       res.writeHead(200, {
         "content-type": "application/json",
         "cache-control": "no-store",
@@ -59,7 +57,19 @@ createServer(async (req, res) => {
       res.end(JSON.stringify({ token: localToken }));
       return;
     }
-    if (url.pathname === "/") {
+    if (url.pathname === PAPER_OCR_PATH) {
+      const request = new Request(url, {
+        method: req.method,
+        headers: req.headers,
+        ...(req.method === "POST" ? { body: Readable.toWeb(req), duplex: "half" } : {}),
+      });
+      const response = await handlePaperOcr(request, paperOcr);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text());
+      return;
+    }
+    // 根路径直接出站内页会让相对资源解析到 /assets/*（404 无样式），重定向到真实入口
+    if (path === "/") {
       res.writeHead(302, { location: "/web/index.html" });
       res.end();
       return;
@@ -69,18 +79,15 @@ createServer(async (req, res) => {
       headers: req.headers,
       ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: Readable.toWeb(req), duplex: "half" }),
     });
-    apiRoute = url.pathname === MODEL_CONFIG_PATH || url.pathname.startsWith(`${MODEL_CONFIG_PATH}/`) || url.pathname === PAPER_MODEL_PATH || url.pathname === PAPER_OCR_PATH;
+    apiRoute = url.pathname === MODEL_CONFIG_PATH || url.pathname.startsWith(`${MODEL_CONFIG_PATH}/`) || url.pathname === PAPER_MODEL_PATH;
     if (apiRoute) {
       const response = url.pathname === PAPER_MODEL_PATH
         ? await handlePaperModel(request, { encryptionKey, token: localToken }, modelService)
-        : url.pathname === PAPER_OCR_PATH
-          ? await handlePaperOcr(request, paperOcr)
-          : await handleModelConfig(request, { filePath: join(root, ".model-keys.json"), encryptionKey, token: localToken });
+        : await handleModelConfig(request, { filePath: join(root, ".model-keys.json"), encryptionKey, token: localToken });
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(await response.text());
       return;
     }
-    let path = decodeURIComponent(url.pathname);
     if (path.includes("\0")) {
       res.writeHead(400);
       res.end("invalid path");
