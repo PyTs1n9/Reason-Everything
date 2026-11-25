@@ -57,3 +57,18 @@ test("桌面三列对照，窄屏顺序阅读且操作保持可达", () => {
   assert.match(css, /\.paper-evidence-card\s*\{[^}]*min-width: 0/s);
   assert.match(css, /\.paper-evidence-card \[hidden\]\s*\{\s*display: none/s);
 });
+
+test("PDF 导入弹窗移除冗余首页预览，解析摘要与逐页阅读保留", () => {
+  const importView = study.slice(study.indexOf("function openImportResultModal("), study.indexOf("function closeImportResultModal("));
+  assert.doesNotMatch(importView, /import-preview|importCopyText|首页预览|复制首页文本|navigator\.clipboard/);
+  assert.doesNotMatch(css, /\.import-preview\b/);
+  for (const label of ["文件", "页数", "待 OCR", "字符数", "SHA-256"]) {
+    assert.ok(importView.includes(`text: "${label}"`), `缺少解析摘要 ${label}`);
+  }
+  assert.match(importView, /h\("div", \{ class: "modal-actions" \}, useBtn, closeBtn\)/);
+  assert.match(study, /pages = await extractPaperPages\(pdf\)/);
+  assert.match(study, /extractPaperTitle\(\{ metaTitle, firstPageText: [^\n]*pages\[0\]/);
+  assert.match(study, /data\.importPaper\(ACTOR, \{[^;]*paper: nextPaper/s);
+  assert.match(study, /function renderPaperStudy\(/);
+  assert.match(study, /const text = paper\.pages\[pageNumber - 1\] \?\? ""/);
+});

@@ -423,3 +423,10 @@
 - **离线测试**：`tests/web-workbench-tools.test.ts` 新增反向断言，覆盖文案、徽标、快捷键监听、待聚焦状态和 CSS 残留；定向测试 **6/6 pass、exit 0**。完整 `npm test` = **320/320 pass、exit 0**；`npm run verify:flow` 全部离线场景通过（真实模型未测单列）、exit 0；`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
 - **浏览器实测（127.0.0.1:8326，真实 IndexedDB + Headless Chrome 1440×1000）**：两个项目时搜索唯一名称筛为 1 个，Escape 清空恢复 2 个；项目页派发 `Ctrl K` 与 `⌘ K` 均不阻止默认行为、不改路由、不聚焦搜索。截图核对搜索框仅显示「搜索项目」、右侧内边距 12px、无徽标、无横向溢出，控制台 error/warn 为 0；无头验收命令 exit 0。临时项目、浏览器页、截图、Chrome 配置与 8326 服务均已清理。
 - **未测/受限**：内置浏览器视口为 0×0，可见截图与布局结论来自本机无头 Chrome；交互使用自动化 DOM/CDP 事件，未声称物理键鼠验收。真实模型未测；`tsc` 未跑（依赖冻结）。**本次没做**：未改搜索过滤、Escape 行为、业务 schema、模型服务、依赖、发布、站点访问范围或其他并行未提交成果。
+
+## 卡 R15 · 删除 PDF 导入冗余首页预览（2026-11-25）
+
+- **交付**：删除 PDF 导入弹窗中的首页文本预览与「复制首页文本」按钮及专用样式，只保留文件、页数、待 OCR、字符数、SHA-256 解析摘要、文献题名、OCR 选项和创建/加入项目操作；PDF 解析、原件保存、候选生成、引文回查与项目逐页阅读器均未改动。
+- **离线测试**：`web-paper-compare.test.ts` 新增反向断言，覆盖预览/复制入口与 CSS 残留、解析摘要字段、导入接线和逐页文字读取；定向新增用例 **1/1 pass、exit 0**。HEAD + 本卡补丁的隔离快照完整 `npm test` = **311/311 pass、fail 0、exit 0**；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、卡范围 `git diff --check` 均 exit 0。
+- **浏览器实测（隔离快照 127.0.0.1:8328，真实 IndexedDB + PDF.js + Headless Chrome 1440×1000）**：导入有效两页 PDF 后弹窗显示 2 页、待 OCR 0 页、272 字符与正确 SHA-256 缩写，`.import-preview` 和 `#importCopyText` 均为 0；题名自动回填，创建项目后原版画布可用，切「文字重排」可读第一页，下一页导航到第 2 页且路由携带文献指纹。截图已目视核对，无头验收命令 exit 0；临时项目、PDF、浏览器配置、截图与服务均已清理。
+- **未测/受限**：交互使用 CDP 自动化事件，未声称物理键鼠验收；真实模型未测，`tsc` 未跑（依赖冻结）。当前混合工作区 `npm test` = **334/336 pass、exit 1**，两项分别为并行未提交的 `web-paper-compare` 证据路由旧正则与 `web-ux` 主题左侧强调条断言，均不纳入本卡。**本次没做**：未改 PDF 解析/阅读器、业务 schema、模型服务、依赖、发布、站点访问范围或其他并行未提交成果。

@@ -2542,19 +2542,6 @@ h1 .project-title-input[aria-invalid="true"] {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 
-.import-preview {
-  max-height: 160px;
-  overflow: auto;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  font-size: 13px;
-  line-height: 20px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 /* ---------- 卡 22：论文阅读台（左正文 / 右证据栏） ---------- */
 
 .reader-layout {

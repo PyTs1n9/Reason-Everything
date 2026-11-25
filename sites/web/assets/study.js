@@ -1093,23 +1093,6 @@ function openImportResultModal({ file, bytes, paper, textChars, title, sha256, t
   });
 
   const titleInput = h("input", { type: "text", id: "importPaperTitle", value: title, maxlength: 500, autocomplete: "off" });
-  const preview = h("p", {
-    class: "import-preview",
-    text: (paper.pages[0] ?? "").slice(0, 600) || "（首页无文本，可先保存原版后做 OCR）",
-  });
-
-  const copyBtn = h("button", { class: "btn", type: "button", id: "importCopyText", text: "复制首页文本" });
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(paper.pages[0] ?? "");
-      copyBtn.textContent = "已复制";
-    } catch {
-      copyBtn.textContent = "复制失败，请手动选取";
-    }
-    setTimeout(() => {
-      copyBtn.textContent = "复制首页文本";
-    }, 2000);
-  });
 
   const pendingPages = pagesNeedingOcr(paper);
   const ocrOptIn = h("input", { type: "checkbox", id: "importPaperOcr", disabled: pendingPages.length === 0 });
@@ -1171,14 +1154,10 @@ function openImportResultModal({ file, bytes, paper, textChars, title, sha256, t
       h("label", { for: "importPaperTitle", text: "文献题名" }),
       titleInput,
     ),
-    h("div", { class: "field" },
-      h("span", { class: "aux", text: "首页预览 · 项目会保存各页的可提取文字" }),
-      preview,
-    ),
     ...(autoGenerate ? [autoGenerate.label] : []),
     ocrChoice,
     error,
-    h("div", { class: "modal-actions" }, copyBtn, useBtn, closeBtn),
+    h("div", { class: "modal-actions" }, useBtn, closeBtn),
   );
 
   importModalState = { trigger, overlay };
