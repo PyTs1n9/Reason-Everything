@@ -2156,7 +2156,7 @@ async function requestPaperModel(input) {
     method: "POST",
     headers: { "content-type": "application/json", "x-agentflow-local-token": token },
     body: JSON.stringify(input),
-    signal: AbortSignal.timeout(70_000),
+    signal: AbortSignal.timeout(190_000),
   });
   let response = await send(await localToken());
   if (response.status === 401) {

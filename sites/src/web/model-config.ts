@@ -244,7 +244,7 @@ async function requestUpstream(
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "manual",
-      signal: AbortSignal.timeout(deps.timeoutMs ?? (kind === "chat" ? 65_000 : 15_000)),
+      signal: AbortSignal.timeout(deps.timeoutMs ?? (kind === "chat" ? 180_000 : 15_000)),
     });
   } catch (error) {
     if (error?.name === "TimeoutError") throw new Error("模型服务请求超时，请稍后重试");
@@ -255,7 +255,8 @@ async function requestUpstream(
   let payload: unknown;
   try {
     payload = await upstream.json();
-  } catch {
+  } catch (error) {
+    if (error?.name === "TimeoutError") throw new Error("模型服务请求超时，请稍后重试");
     throw new Error("模型服务响应不是有效 JSON");
   }
   return payload;

@@ -127,6 +127,35 @@ test("模型列表携带 Bearer 鉴权，异常响应、401、网络错误与超
   }
 });
 
+test("响应体读取中途超时如实报超时，不误报为坏 JSON", async () => {
+  const { dir, filePath } = fixture();
+  try {
+    const service = createModelConfigService({ filePath, encryptionKey: key });
+    await service.save({ ...input, model: "mock-model" });
+    const bodyTimeout = createModelConfigService({
+      filePath,
+      encryptionKey: key,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); },
+      } as unknown as Response),
+    });
+    await assert.rejects(
+      bodyTimeout.complete([{ role: "user", content: "hi" }], undefined),
+      (error: Error) => /超时/.test(error.message) && !/不是有效 JSON/.test(error.message),
+    );
+    const badJson = createModelConfigService({
+      filePath,
+      encryptionKey: key,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token"); } } as unknown as Response),
+    });
+    await assert.rejects(badJson.complete([{ role: "user", content: "hi" }], undefined), /不是有效 JSON/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("HTTP 配置接口校验同源与本地令牌，读取响应不回传明文密钥", async () => {
   const { dir, filePath } = fixture();
   try {

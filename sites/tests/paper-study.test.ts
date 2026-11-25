@@ -131,6 +131,15 @@ test("拒绝模型编造的页码、跨页和拼接引文，空列表可重试",
   assert.deepEqual(await generatePaperCandidates(paper, async () => reply([])), { model, candidates: [] });
 });
 
+test("模型 JSON 字符串值内的未转义引号不阻断候选生成", async () => {
+  const source = { ...paper, pages: [intro, "", limitation] };
+  const raw = `{"candidates":[{"question":"复现结论时"方差"口径如何统一？","claim":"单次运行的差值可能落在噪声内。","rationale":"论文没有报告多种子方差。","verification":"固定数据与调度，各跑 5 个种子后配对比较。","citations":[{"page":3,"quote":"${limitation}"}]}]}`;
+  const generated = await generatePaperCandidates(source, async () => ({ model, text: raw }));
+  assert.equal(generated.candidates[0]?.question, '复现结论时"方差"口径如何统一？');
+  assert.deepEqual(generated.candidates[0]?.citations, [{ page: 3, quote: limitation }]);
+  await assert.rejects(generatePaperCandidates(source, async () => ({ model, text: "模型今天只输出了这段话。" })), /候选研究问题不是合法 JSON/);
+});
+
 test("入库后正文可重读，候选经人工编辑确认才创建问题，重复确认幂等", async () => {
   const backend = new MemoryBackend();
   const data = createDataService(backend);

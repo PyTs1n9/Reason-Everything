@@ -77,6 +77,17 @@ test("非 JSON 输出直接失败", () => {
   assert.throws(() => parse("模型今天不想说话"), /不是合法 JSON/);
 });
 
+test("字符串值内未转义的英文双引号按结构修复后解析", () => {
+  const raw = '{"cards":[{"id":"E1","page":1,"quote":"We recruited 128 participants aged between 20 and 34 years.","claim":"作者说"结果显著"，需要复核。","kind":"method"}]}';
+  const [cards, issues] = parse(raw);
+  assert.deepEqual(issues, []);
+  assert.equal(cards[0]!.claim, '作者说"结果显著"，需要复核。');
+});
+
+test("修复不了的残缺 JSON 仍然失败", () => {
+  assert.throws(() => parse('{"cards":[{"id":"E1","claim":"未闭合'), /不是合法 JSON/);
+});
+
 test("能定位的摘句标记为 verified 并给出偏移与上下文", () => {
   const [cards] = parse(payload([GOOD]));
   const [verified, issues] = verify(cards, [PAGE], "p_test");
