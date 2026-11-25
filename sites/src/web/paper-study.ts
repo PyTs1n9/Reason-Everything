@@ -6,16 +6,6 @@ export const PAPER_MODEL_PATH = "/functions/v1/app/paper-questions";
 const BATCH_SIZE = 10_000;
 const MAX_CANDIDATES = 5;
 
-export type PaperPageSource = "text" | "ocr" | "pending" | "failed";
-
-export interface PaperRegion {
-  text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface PaperSource {
   title: string;
   filename: string;
@@ -25,6 +15,16 @@ export interface PaperSource {
   pageSources?: PaperPageSource[];
   pageErrors?: string[];
   pageRegions?: PaperRegion[][];
+}
+
+export type PaperPageSource = "text" | "ocr" | "pending" | "failed";
+
+export interface PaperRegion {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface PaperCitation {
@@ -38,6 +38,22 @@ export interface PaperCandidate {
   rationale: string;
   verification: string;
   citations: PaperCitation[];
+}
+
+export const PAPER_EVIDENCE_KINDS = ["support", "counterexample", "condition"] as const;
+export type PaperEvidenceKind = typeof PAPER_EVIDENCE_KINDS[number];
+
+export interface PaperEvidence {
+  evidenceId: string;
+  projectId: string;
+  questionId: string;
+  paperSha256: string;
+  page: number;
+  quote: string;
+  kind: PaperEvidenceKind;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PaperStudy extends PaperSource {
@@ -109,6 +125,37 @@ function readText(value: unknown, max: number): string {
   return value.trim();
 }
 
+function readCitation(page: unknown, value: unknown): PaperCitation {
+  if (typeof page !== "number" || !Number.isSafeInteger(page) || page < 1) throw new Error("引文页码无效");
+  if (typeof value !== "string" || !value.trim()) throw new Error("引文原文无效");
+  const quote = value.trim();
+  if (Array.from(quote).length > 400) throw new Error(`第 ${page} 页引文过长`);
+  if (Array.from(quote.replace(/\s/g, "")).length < 10) throw new Error(`第 ${page} 页引文过短`);
+  return { page, quote };
+}
+
+function matchCitation(pageText: string, page: unknown, value: unknown): PaperCitation | null {
+  const citation = readCitation(page, value);
+  const span = locate(pageText, citation.quote);
+  if (!span) return null;
+  const original = codePointSlice(pageText, ...span);
+  if (Array.from(original).length > 400) throw new Error(`第 ${citation.page} 页引文过长`);
+  return { page: citation.page, quote: original };
+}
+
+function verifiedCitation(pageText: string, page: unknown, value: unknown): PaperCitation {
+  const citation = matchCitation(pageText, page, value);
+  if (!citation) throw new Error(`第 ${String(page)} 页引文无法回查原文`);
+  return citation;
+}
+
+export function verifyPaperQuote(paper: PaperSource, page: unknown, quote: unknown): PaperCitation {
+  if (typeof page !== "number" || !Number.isSafeInteger(page) || page < 1 || page > paper.pages.length) {
+    throw new Error("引文页码超出论文物理页范围");
+  }
+  return verifiedCitation(paper.pages[page - 1] ?? "", page, quote);
+}
+
 function readCandidates(value: unknown, sources?: PaperExcerpt[]): PaperCandidate[] {
   if (!Array.isArray(value) || value.length > MAX_CANDIDATES) throw new Error("模型候选列表无效");
   return value.map((item: unknown) => {
@@ -116,20 +163,13 @@ function readCandidates(value: unknown, sources?: PaperExcerpt[]): PaperCandidat
       throw new Error("每条候选需要 1 到 3 条引文");
     }
     const citations = item.citations.map((citation: unknown): PaperCitation => {
-      if (!isRecord(citation) || typeof citation.page !== "number" || !Number.isSafeInteger(citation.page) || citation.page < 1) {
-        throw new Error("模型引文页码无效");
-      }
+      if (!isRecord(citation)) throw new Error("模型引文页码无效");
       const { page } = citation;
-      const quote = readText(citation.quote, 400);
-      if (Array.from(quote.replace(/\s/g, "")).length < 10) throw new Error(`第 ${page} 页引文过短`);
-      if (!sources) return { page, quote };
+      if (!sources) return readCitation(page, citation.quote);
       for (const source of sources) {
         if (source.page !== page) continue;
-        const span = locate(source.text, quote);
-        if (span) {
-          const original = codePointSlice(source.text, ...span);
-          if (original.length <= 400) return { page, quote: original };
-        }
+        const matched = matchCitation(source.text, page, citation.quote);
+        if (matched) return matched;
       }
       throw new Error(`第 ${page} 页引文无法回查原文`);
     });

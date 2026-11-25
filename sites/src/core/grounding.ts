@@ -83,6 +83,23 @@ export function canonical(text: string): string {
   return canonicalize(text).text;
 }
 
+/** 返回引文在原文中的 (起, 止) 码点偏移；定位失败返回 null。 */
+export function locate(pageText: string, quote: string): [number, number] | null {
+  if (!pyStrip(quote)) return null;
+  const haystack = canonicalize(pageText);
+  const needle = canonicalize(quote);
+  if (needle.chars.length === 0) return null;
+  const atUtf16 = haystack.text.indexOf(needle.text);
+  if (atUtf16 < 0) return null;
+  // indexOf 给的是 UTF-16 偏移，换算成码点下标后才能索引 index 数组。
+  const at = codePointLength(haystack.text.slice(0, atUtf16));
+  const last = at + needle.chars.length - 1;
+  const start = haystack.index[at];
+  const end = haystack.index[last];
+  if (start === undefined || end === undefined) return null;
+  return [start, end + 1];
+}
+
 /** 返回全部匹配，供 PDF 高亮区分唯一位置与仅页级定位。 */
 export function locateAll(pageText: string, quote: string): Array<[number, number]> {
   if (!pyStrip(quote)) return [];
@@ -102,23 +119,6 @@ export function locateAll(pageText: string, quote: string): Array<[number, numbe
     from = atUtf16 + 1;
   }
   return matches;
-}
-
-/** 返回引文在原文中的 (起, 止) 码点偏移；定位失败返回 null。 */
-export function locate(pageText: string, quote: string): [number, number] | null {
-  if (!pyStrip(quote)) return null;
-  const haystack = canonicalize(pageText);
-  const needle = canonicalize(quote);
-  if (needle.chars.length === 0) return null;
-  const atUtf16 = haystack.text.indexOf(needle.text);
-  if (atUtf16 < 0) return null;
-  // indexOf 给的是 UTF-16 偏移，换算成码点下标后才能索引 index 数组。
-  const at = codePointLength(haystack.text.slice(0, atUtf16));
-  const last = at + needle.chars.length - 1;
-  const start = haystack.index[at];
-  const end = haystack.index[last];
-  if (start === undefined || end === undefined) return null;
-  return [start, end + 1];
 }
 
 /** 引文所在的原文窗口，按码点切片后归一化。 */

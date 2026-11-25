@@ -173,7 +173,7 @@ async function main(): Promise<void> {
   const wfReentry = createWorkflowService({ storage: data, agent: null, now });
 
   console.log("== AgentFlow 无界面核验闭环（verify:flow）==");
-  console.log("模型模式: mock-verify（离线桩）；真实模型: 未接通（见 ⑦）");
+  console.log("模型模式: mock-verify（离线桩）；本地模型配置接口已实现，真实模型未测");
   console.log("数据: 进程内后端 + 隔离测试项目（p_v1..p_v5），不触碰真实研究数据");
 
   const runsOf = (projectId: string) => data.listRuns(ACTOR, projectId);
@@ -435,8 +435,8 @@ async function main(): Promise<void> {
 
   // ---------- ⑦ 真实最终分析 ----------
   console.log(
-    "[⑦] 未测 真实最终分析需平台接通（get_site: backend=disabled、functions=[]、QODER_PAT 需用户明确确认）；" +
-      "最小待办见 sites/docs/progress.md 卡 08。不填假数。",
+    "[⑦] 未测 真实最终分析需用户在本机模型服务中配置 API Key 与模型；" +
+      "本次验收只使用离线 mock，不联网、不记录真实密钥。",
   );
 
   // ---------- 汇总 ----------

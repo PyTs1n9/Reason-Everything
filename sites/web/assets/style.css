@@ -166,7 +166,7 @@ a { color: var(--site-accent); text-decoration-thickness: 1px; text-underline-of
   transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
 }
 .paper:hover { border-color: color-mix(in srgb, var(--site-accent) 45%, var(--site-border)); }
-.paper.active { border-color: var(--site-accent); box-shadow: inset 3px 0 0 var(--site-accent); }
+.paper.active { border-color: var(--site-accent); }
 .paper-title {
   font-size: var(--t-label); font-weight: 600; line-height: 1.45; margin-bottom: var(--space-2xs);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -267,7 +267,6 @@ a { color: var(--site-accent); text-decoration-thickness: 1px; text-underline-of
   border: 1px solid var(--site-border); border-radius: var(--site-radius);
   background: var(--site-bg);
   padding: var(--space-sm) calc(16px * var(--site-space));
-  border-left: 3px solid var(--site-accent);
 }
 .kpi__label { font-family: var(--font-mono); font-size: var(--t-mono-meta); letter-spacing: .1em; text-transform: uppercase; color: var(--site-muted); }
 .kpi__value { display: block; margin-top: var(--space-3xs); font-family: var(--site-font); font-size: var(--t-kpi); line-height: 1.15; font-weight: 500; }
@@ -275,8 +274,8 @@ a { color: var(--site-accent); text-decoration-thickness: 1px; text-underline-of
 .kpi__delta { display: block; margin-top: var(--space-3xs); font-size: var(--t-mono-meta); font-family: var(--font-mono); }
 .kpi__delta--good { color: var(--site-accent); }
 .kpi__delta--bad { color: var(--risk); }
-.kpi--bad { border-left-color: var(--risk); }
-.kpi--warn { border-left-color: var(--gold); }
+.kpi--bad { --fan-color: var(--risk); }
+.kpi--warn { --fan-color: var(--gold); }
 
 .spec { margin-top: var(--space-md); display: grid; gap: 1px; background: var(--site-border); border: 1px solid var(--site-border); border-radius: var(--site-radius); overflow: hidden; }
 .spec__row { display: grid; grid-template-columns: calc(130px * var(--site-space)) minmax(0, 1fr); background: var(--site-bg); }
@@ -332,8 +331,8 @@ a { color: var(--site-accent); text-decoration-thickness: 1px; text-underline-of
 
 /* ---------- 证据卡 / 论断 ---------- */
 .grid-cards { display: grid; gap: var(--space-sm); }
-.card-item { border: 1px solid var(--site-border); border-left: 3px solid var(--site-accent); border-radius: var(--site-radius); padding: var(--space-sm) calc(16px * var(--site-space)); background: var(--site-bg); }
-.card-item.unverified { border-color: color-mix(in srgb, var(--risk) 40%, var(--site-border)); border-left-color: var(--risk); background: color-mix(in srgb, var(--risk) 4%, var(--site-bg)); }
+.card-item { border: 1px solid var(--site-border); border-radius: var(--site-radius); padding: var(--space-sm) calc(16px * var(--site-space)); background: var(--site-bg); }
+.card-item.unverified { --fan-color: var(--risk); border-color: color-mix(in srgb, var(--risk) 40%, var(--site-border)); background: color-mix(in srgb, var(--risk) 4%, var(--site-bg)); }
 .card-top { display: flex; align-items: center; gap: var(--space-xs); margin-bottom: var(--space-xs); flex-wrap: wrap; }
 .card-id { color: var(--site-muted); font-family: var(--font-mono); font-size: var(--t-mono-meta); }
 .card-quote {
@@ -423,7 +422,7 @@ pre {
 }
 .toc__link:hover { background: var(--site-surface); color: var(--site-accent); }
 .toc__no { font-family: var(--font-mono); font-size: var(--t-mono-meta); color: var(--site-muted); }
-.toc__link[aria-current="true"] { background: color-mix(in srgb, var(--site-accent) 10%, var(--site-bg)); color: var(--site-accent); font-weight: 650; box-shadow: inset 2px 0 0 var(--site-accent); }
+.toc__link[aria-current="true"] { background: color-mix(in srgb, var(--site-accent) 10%, var(--site-bg)); color: var(--site-accent); font-weight: 650; }
 .toc__link[aria-current="true"] .toc__no { color: var(--site-accent); }
 
 /* ---------- 页脚 ---------- */
@@ -452,6 +451,84 @@ pre {
   border: 3px dashed var(--site-bg);
   display: flex; align-items: center; justify-content: center;
   color: var(--site-bg); font-size: var(--t-h3); font-family: var(--site-font);
+}
+
+/* 三联扇叶替代高亮竖线，语义色由组件状态继承。 */
+.paper,
+.kpi,
+.card-item,
+.toc__link {
+  --fan-size: 20px;
+  --fan-offset: 10px;
+  position: relative;
+}
+
+.paper {
+  --fan-opacity: 0;
+  padding-left: calc(36px * var(--site-space));
+}
+
+.kpi,
+.card-item {
+  --fan-opacity: 0.78;
+  padding-left: calc(40px * var(--site-space));
+}
+
+.toc__link {
+  --fan-size: 16px;
+  --fan-offset: 8px;
+  --fan-opacity: 0;
+  padding-left: calc(34px * var(--site-space));
+}
+
+.paper:hover {
+  --fan-opacity: 0.62;
+}
+
+.paper.active,
+.toc__link[aria-current="true"] {
+  --fan-opacity: 1;
+}
+
+.paper::before,
+.kpi::before,
+.card-item::before,
+.toc__link::before {
+  content: "";
+  position: absolute;
+  left: var(--fan-offset);
+  top: 50%;
+  z-index: 0;
+  width: var(--fan-size);
+  height: var(--fan-size);
+  border-radius: 100% 0 0 0;
+  background:
+    radial-gradient(circle at 0 100%, var(--fan-color, var(--site-accent)) 0 2px, transparent 2.5px),
+    conic-gradient(
+      from 0deg at 0 100%,
+      var(--fan-color, var(--site-accent)) 0deg 24deg,
+      transparent 24deg 30deg,
+      color-mix(in srgb, var(--fan-color, var(--site-accent)) 68%, transparent) 30deg 54deg,
+      transparent 54deg 60deg,
+      color-mix(in srgb, var(--fan-color, var(--site-accent)) 38%, transparent) 60deg 84deg,
+      transparent 84deg 90deg
+    );
+  opacity: var(--fan-opacity);
+  transform: translateY(-50%) rotate(-8deg);
+  filter:
+    drop-shadow(0 3px 3px color-mix(in srgb, var(--fan-color, var(--site-accent)) 24%, transparent))
+    drop-shadow(0 0 7px color-mix(in srgb, var(--fan-color, var(--site-accent)) 16%, transparent));
+  pointer-events: none;
+  transition: opacity var(--dur) ease, filter var(--dur) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paper::before,
+  .kpi::before,
+  .card-item::before,
+  .toc__link::before {
+    transition: none;
+  }
 }
 
 /* ---------- 平板 ---------- */

@@ -239,15 +239,14 @@
 - `npm test` 187 项通过，退出码 0。`npm run verify:flow` 6 个离线场景通过，退出码 0。`npm run build:web` 和 `git diff --check` 退出码 0。使用现有 PDF.js 在 Node 中提取了三页合成 PDF，确认第 2 页为空而第 3 页原文可读。本地同源接口实测未配置时返回 HTTP 503，接入本地模拟上游时返回 HTTP 200。
 - 浏览器点击和刷新未验证。Computer Use 无法核验当前浏览器地址并中止；真实模型依赖服务端配置，Qoder Sites 路由和发布待验证。OCR、原版面查看及表格结构化留待后续。
 
-## 卡 21 · PDF 扫描识别与原版面定位（2026-11-25）
+## 卡 22 · 同一研究问题下的多篇论文对照（2026-11-25）
 
-- **交付**：复用既有 PDF.js 逐页读取物理页序，仅将没有可用文字层的页标记为待识别；新增可替换 OCR 适配层、同源 `/functions/v1/app/paper-ocr` 服务端路由与 Windows WinRT 本机 OCR 脚本，外部服务密钥只从服务端环境读取。原 PDF 字节、逐页文字/来源/失败原因/OCR 区域写入 IndexedDB，扫描件可在 OCR 未配置或未执行时先保存并查看原页。
-- **识别状态与重试**：导入默认不勾选 OCR，必须显式确认才发送待识别页；项目页区分文字层、OCR、待识别、失败，支持全部待识别页与单页识别/重试。成功保存文字与区域，失败保存真实错误且不抹掉其他页；候选生成只读取文字层或成功 OCR 页，OCR 后自动生成会重新读取最新入库文本。
-- **原版定位**：原页查看器支持前后翻页、缩放、适合宽度；文字层按 PDF.js 仿射变换定位，OCR 按词区域定位，跨行/跨词引文映射多个矩形。重复摘录或缺少坐标时退回页级精度，不伪造高亮；旧文字项目可补传同一 SHA-256 的原 PDF，已有问题、候选与引文关系保留。
-- **本卡修复的真实缺陷**：① 浏览器像素核对发现文字层矩形落在基线下方，改为覆盖字体上升区域后，正向页高亮内暗色像素由 2 增至 104，旋转页由 0 增至 181；② 新建导入弹窗把可选自动生成节点直接交给 `append`，出现 `undefined/null` 文本，改为条件展开并补静态回归断言。
-- **离线测试**：新增 `tests/paper-ocr.test.ts` 18 例与 `tests/web-paper-ocr.test.ts` 6 例，覆盖请求/区域校验、同源与密钥边界、503/502/504、临时文件清理、字节与 OCR 跨实例恢复、失败重试、旧项目补传、候选排除未识别页、跨行/旋转/缩放/重复引文。`npm test` = **219/219 pass、fail 0、exit 0**；`npm run verify:flow` = 全部离线场景通过、exit 0（真实模型未接通单列）；`npm run build:web` = exit 0。
-- **浏览器实测（127.0.0.1:18766，IndexedDB 正式适配器）**：纯扫描 PDF 以 0 字符、1 页待识别保存，刷新后原字节与 pending 状态完整，原页可渲染且生成按钮禁用；混合 PDF 只识别无文字层页，真实 Windows OCR 返回 `SCANNED PAGE TWO/THREE`，刷新后文字、区域、来源均恢复；模拟 503 后显示实际失败原因并可重试成功；旧项目补传后 1 个问题、候选引文和确认关系不变，原 PDF 44,508 字节可读；OCR 区域高亮 3 块，缩放后百分比坐标不变；文字层唯一引文精确高亮，重复 `page` 退回「该页有 2 处相同摘录」；90° 旋转页高亮覆盖字形，放大后仍与暗色像素重合。
-- **未测/受限**：in-app 浏览器视口为 0×0 且不可见，未获取可见截图；本轮以 DOM 快照、真实事件、IndexedDB 读回和 Canvas 像素核对留证。外部托管 OCR 供应商未配置，仅以 mock 覆盖服务端协议；真实模型候选生成未接通；`tsc` 未跑（依赖冻结）。**下一卡**：22 或用户指定。
+- **交付**：同一项目可按 `(projectId, sha256)` 保留多篇 PDF，重复文件复用原记录；旧单篇项目、问题、候选与引文保持可读。候选生成与作业锁按文献指纹隔离，确认候选时搜索项目内全部文献。新增 `PaperEvidence` 附属记录，证据必须指定项目文献、物理页和连续原文，经服务端回查后回存原文切片；分类只接受支持证据、反例、适用条件，说明必填。编辑仅改分类与说明，解除关联只删除问题证据关系，项目删除级联清理文献、原文件与证据。
+- **页面**：项目页新增文献列表和添加 PDF 入口，阅读路由携带文献 SHA、物理页和可选证据引用。问题页新增三类证据对照、空类别「待补充」、添加证据和添加 PDF 入口；证据卡展示标题、文件名、物理页、原文和研究者说明，可编辑、二级确认解除关联并跳回指定文献页。桌面三列、窄屏顺序排列；PDF 候选问题不再提前退出，正常澄清、分析、矩阵与研究记录面板继续可用。
+- **离线测试**：新增 `tests/paper-evidence.test.ts` 6 项与 `tests/web-paper-compare.test.ts` 4 项，覆盖多文献去重与旧数据兼容、同页相似句不串文、错误页/改写/跨项目原子拒绝、三类证据、编辑解绑、候选独立确认和删除级联，以及路由、正式服务调用和响应式接线。卡 22 相关回归 `node --test tests/paper-evidence.test.ts tests/paper-study.test.ts tests/web-paper-compare.test.ts tests/web-reader.test.ts tests/research-records.test.ts` = **35/35 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8322，IndexedDB 正式适配器）**：三篇合成文献写入同一项目后，真实问题路由显示支持/反例/适用条件三列；添加证据时载入指定页并回查原文成功；编辑分类和说明后刷新保留；二级解除关联后文献正文仍可读。同页相似句的证据链接准确打开 Paper B 第 1 页并高亮对应原句，没有打开默认文献。通过同源 iframe 实测 1440px 三列（每卡约 303px）和 390px 单列，无横向溢出，添加 PDF/证据入口可见，操作按钮高 42px。浏览器修复一处真实缺陷：`.btn` 的 `display:flex` 覆盖隐藏属性，导致未确认的「取消」按钮常显，已补 `.paper-evidence-card [hidden]{display:none}` 和回归断言。
+- **服务实测**：浏览器同源 `POST /functions/v1/app/paper-questions` 未配置模型时返回 HTTP 503 和明确提示，未发起上游请求。**未测/受限**：in-app 浏览器视口为 0×0，PDF.js worker 未完成，原生文件选择与可见截图未验证；本轮 PDF 路由、证据交互和持久化通过正式服务与真实页面事件验证。真实模型、云存储与发布未接通；`tsc` 未跑（依赖冻结）。
+- **验收命令**：`npm test` exit 1（**245/246 pass**）；唯一失败为 `tests/web-ux.test.ts:120` 仍静态匹配前序未提交服务改动中的 `if (path === "/")`，当前实现为 `if (url.pathname === "/")`，不属于本卡范围，未越界修改。`npm run verify:flow` exit 0；`npm run build:web` exit 0；根目录 `git diff --check` exit 0。**下一卡**：23 交付后继续 24（或用户指定）。
 
 ## 卡 23 · 问题研究记录与验证结果（2026-11-25）
 
@@ -258,6 +257,23 @@
 - **级联与清理**：浏览器删除自建验收项目，删除前 2 笔记 / 1 事项 / 2 结果 / 1 文献；删除后对应计数全部为 0，无悬空研究问题或结果事项，临时保留项目仍存在，随后临时项目也已清理。
 - **验收命令**：干净交付快照 `node --test tests/research-records.test.ts` exit 0（8/8）；`npm test` exit 0（**195/195 pass**）；`npm run verify:flow` exit 0（全部离线场景通过，真实模型未接通单列）；`npm run build:web` exit 0；根目录 `git diff --check` 与 `git diff --cached --check` exit 0。混合工作区中的前序未提交改动不纳入本卡提交。
 - **未测/受限**：in-app 浏览器视口为 0×0 且不可见，指针点击与可见截图无法完成（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`）；本轮以 DOM 快照、脚本派发真实事件、IndexedDB 读回与页面路由核验，未声称可见布局验收。真实模型与云存储仍未接通；`tsc` 未跑（依赖冻结）。**下一卡**：24（或用户指定）。
+
+## 卡 24 · 文章页紧凑布局与首屏阅读区（2026-11-25）
+
+- **交付**：桌面紧凑页头、1680px 内容宽度、320px 证据栏与单行 OCR 摘要保留；正文、原版页面和证据栏全部改为内容自然高度，移除定高与内部滚动。主阅读器默认展示原始 PDF 画布，保留双栏、图表、公式、页边距和物理分页；文字重排降为复制/检索备用，两种模式共用同一外框宽度。新增原版/文字切换、0.5–3 倍相对缩放、适应宽度、宽度变化重绘、离屏绘制与旧渲染序号保护；PDF 文档按文献指纹缓存，专注弹层与主阅读器共用渲染函数。数据契约与依赖未变。
+- **离线测试**：`tests/web-reader-layout.test.ts` 8 项覆盖桌面作用域、吸顶避让、紧凑页头、自然高度、原版默认与缩放、双模式同宽、OCR 摘要和窄屏回退；同步更新原版查看器的共享定位断言。`node --test tests/web-reader.test.ts tests/web-reader-layout.test.ts tests/web-paper-ocr.test.ts` = **22/22 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8342，同源 iframe + 真实 IndexedDB/PDF.js）**：使用本轮自建 2 页双栏 PDF 验证。1440×900 原版画布 CSS 735×951，正文随画布展开且 `scrollHeight === clientHeight`；原版与文字模式外框分别为 1129/785/320px，完全一致。125% 缩放画布增至 918.75px 宽并只允许页面区横向滚动，适应宽度恢复 100%；下一页、键盘左键、页码跳转与状态文案通过。1920/1366/1024/961/960/390/320 断点均无页面横向溢出；in-app 浏览器不派发真实 resize，逐档显式触发 resize 后画布按可用宽度重绘。
+- **验收命令**：`npm run build:web` exit 0；上述定向测试 exit 0；`npm run verify:flow` exit 0（全部离线场景通过，真实模型未测单列）；`git diff --check` exit 0（仅 CRLF 转换提示）。全量 `npm test` = **285/287 pass、exit 1**，两项均为前序既有断言漂移：`web-ux.test.ts` 仍要求旧模型提示文案及旧 `if (path === "/")`，未越界修改。
+- **清理与交付状态**：已删除本轮 PDF 夹具、自建项目与 iframe，关闭临时浏览器页并停止 8342 服务。当前 `HEAD` 为 `2801f65`（卡 R 已由并发流程提交），`study.js` / `study.css` 仍混合前序与并发未提交成果，无法隔离提交本卡；按仓库约定未提交、未双推、未发布。
+- **未测/受限**：in-app 浏览器视口为 0×0，原生点击/截图不可执行（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`）；为绕过不可见视口对 `requestAnimationFrame` 的阻塞，探针内临时改为定时器驱动，仅用于验证 PDF.js 绘制，不冒充真实可见性验收。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未改首页、问题详情、业务 schema、模型服务、依赖或站点访问范围，未修上述既有失败，未夹带其他未提交改动。**下一卡**：先隔离交付前序文章页依赖，再提交并双推卡 24（或用户指定）。
+
+## 卡 25 · 全站下拉栏圆角与主题统一（2026-11-25）
+
+- **用户约束**：所有 UI 下拉栏统一使用圆角，主题色与整体一致，并写入长期记忆。落地为全局 `--control-radius: 10px`；默认继承 `--ink / --surface / --line-strong`，松绿箭头、悬停与焦点继承 `--brand / --brand-soft`，禁用态继承 `--surface-2 / --meta-ink`。映射表格、问题元信息、PDF 阅读器的局部规则只保留尺寸差异并给箭头留出空间。
+- **离线测试**：新增 `tests/web-select-style.test.ts` 5 例，覆盖全局令牌与箭头、悬停/焦点/禁用、三处紧凑覆写、暗色令牌及全部 14 个原生下拉栏入口。`node --test tests/web-select-style.test.ts tests/web-reader-layout.test.ts tests/web-follow.test.ts` = **17/17 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8342，临时同源 iframe，验收后已移除）**：浅色与深色各代表控件计算样式核对通过；圆角均为 10px，浅色表面 rgb(255,253,248)/松绿 rgb(31,90,69)，深色表面 rgb(30,33,25)/松绿 rgb(138,199,166)，箭头随主题变化；390px 窄屏 9 个代表控件均在视口内、无文本溢出、页面无横向滚动。8342 为既有本仓库服务，未终止或改动。
+- **验收命令**：上述定向测试 exit 0；`npm run verify:flow` exit 0（全部离线场景通过，真实模型未测单列）；`npm run build:web` exit 0；`git diff --check` exit 0。最终在当前并发工作区复跑 `npm test` = **285/287 pass、exit 1**，与修改前相同的两项既有失败：`web-ux.test.ts` 仍匹配旧模型提示文案及旧 `if (path === "/")`，不属于本卡范围，未越界修改。
+- **未测/受限**：in-app 浏览器视口 0×0，截图返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，以计算样式和坐标留证；原生下拉面板由浏览器/操作系统绘制，未冒充自定义面板验收；真实模型与云存储未接通；`tsc` 未跑（依赖冻结）。**本次没做**：未改 JS、业务 schema、依赖、模型服务、发布或既有失败用例，未夹带工作区其他未提交改动。**交付状态**：未提交、未双推；`study.css` 含卡 24、卡 R 等前序未交付改动，无法在不夹带无关成果的情况下只交付本卡。**下一卡**：先隔离交付前序文章页样式依赖，再提交并双推本卡。
 
 ## 卡 R · 首页项目卡片操作区常显（2026-11-25）
 
@@ -273,6 +289,14 @@
 - **浏览器实测（最新远端隔离快照 127.0.0.1:8371，同源 iframe，临时页与服务均已关闭）**：1440×900 下三张 PNG 全部加载，SVG 羽毛隐藏，树木框 144×876px、`object-fit: cover`、把手宽 24px；拖动宽度 248→308px，受控序列生成 6 片真实银杏叶，手动派发 `animationend` 后全部清理；收起后网格 0/1440px、侧栏宽 0。390×844 下按钮 44×44px、抽屉宽 260px、top 56px、把手隐藏、Escape 回焦、横向溢出 0；控制台无 error/warn。
 - **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。隔离快照 `npm test` = **239/239 pass、exit 0**。
 - **未测/受限**：最终素材的浅色/深色合成预览已目视检查；in-app 浏览器视口仍为 0×0，截图返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`，未声称取得可见页面截图。隐藏 iframe 的 CSS 动画时间停在 0，因此本轮以手动 `animationend` 验证清理，不冒充自然播放证明；拖动使用脚本 PointerEvent 并临时补齐合成事件的 pointer capture，不冒充物理鼠标证明。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未改业务 schema、模型服务、其他页面、依赖、站点访问范围或其他卡冻结契约，未纳入并发未提交改动。
+
+## 卡 26 · 工作台水晶工具条（2026-11-25）
+
+- **交付**：`web/assets/study.js` 将项目搜索与「导入 PDF / 新建项目 / 模型服务」收进同一 `role=group` 工具条，项目计数并入「最近更新」行；空库时搜索与列表头显式收起，导入、新建、模型路由和 Ctrl K 逻辑不变。`web/assets/study.css` 新增玻璃令牌与工具条样式：半透明渐变、模糊折射、内描边、轻扫高光与柔和投影；搜索去除重边框，三个操作统一 11px 圆角与玻璃底，仅导入 PDF 保留主操作权重。≤1199px 工具条整行承接，≤640px 搜索与操作分行、三钮等宽，移动端触控高度 44px；支持聚焦、减少动效、减少透明度和强制颜色模式。
+- **离线测试**：新增 `tests/web-workbench-tools.test.ts` 5 项，覆盖结构与空态、玻璃材质、操作层级、响应式和降级偏好；`node --test tests/web-workbench-tools.test.ts` = **5/5 pass、exit 0**。与下拉栏、侧栏联合回归 `node --test tests/web-workbench-tools.test.ts tests/web-select-style.test.ts tests/web-sidebar.test.ts` = **19/19 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8355，深色偏好）**：创建两个临时项目后，1440/1280 搜索与操作保持同级；1024/768 工具条整行承接；640/390/320 内部分行，三钮等宽且高 44px，各档横向溢出均为 0。搜索「甲」→1 卡并高亮、Escape 清空恢复 2 卡；项目页 Ctrl K→回首页并聚焦搜索；删空两个临时项目后搜索与「最近更新」均 `display:none`，导入/新建/模型服务仍可见。控制台无 error/warn。
+- **验收命令**：上述定向测试 exit 0；`node --check web/assets/study.js` exit 0；`npm run build:web` exit 0；`npm run verify:flow` exit 0（真实模型未测单列）；根目录 `git diff --check` 与 `git diff --cached --check` exit 0。最终 `npm test` = **285/287 pass、exit 1**；两项失败与修改前相同，均为 `web-ux.test.ts` 的旧模型提示文案与旧 `if (path === "/")` 静态断言，不属于本卡范围。
+- **未测/受限**：in-app 浏览器视口 0×0，原生截图返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`；以同源 iframe 真实计算样式、坐标和 DOM 事件留证。真实模型与云存储状态不变；`tsc` 未跑（依赖冻结）。**本次没做**：未修前序失败、未改业务 schema、导入/新建/模型逻辑、其他页面、依赖、发布或站点访问范围。**下一卡**：27（或用户指定）。
 
 ## 卡 R3 · 顶栏高度统一与项目返回入口前移（2026-11-25）
 
@@ -297,9 +321,78 @@
 - **验收命令**：`node --test tests/brand.test.ts tests/storage.test.ts tests/workflow.test.ts` = 30/30 pass、exit 0；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。隔离交付快照 `npm test` = 222/222 pass、exit 0。当前并发工作区全量 `npm test` = 295/297 pass、exit 1；两项失败与修改前基线相同，均为 `web-ux.test.ts` 的旧模型提示文案与旧根路径条件断言。
 - **未测/受限**：未发布线上站点；真实模型与云存储状态不变；本地 `.workbuddy` 历史探针不属于产品源码，未修改。**本次没做**：未修既有失败、未改其他卡片成果、未纳入并发暂存内容。**交付状态**：已按用户确认将本地卡 27/R4 变基到远端 R2；重放后全量 237/237 通过，双推结果在回执中报告。
 
+## 卡 R5 · 森林底图随侧栏轨道满宽（2026-11-25）
+
+- **交付**：将有项目时的森林底图从限宽 1240px 的 `.content` 移到 `.shell` 的伪元素，左侧边界跟随 `--sidebar-width`，覆盖侧栏右侧整个网格轨道；收起侧栏与 ≤1199px 抽屉模式从左侧 0 开始，内容层保持在装饰上方。未改侧栏交互、项目卡片或业务逻辑。
+- **离线测试**：扩展 `tests/web-forest-theme.test.ts`，断言底图轨道定位、收起/平板左边界、移动端与浅色透明度及无障碍降级；`node --test tests/web-forest-theme.test.ts` = **6/6 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8366，Headless Chrome）**：2559×1347 下侧栏 208/248/308/420px 时，底图宽度分别为 2351/2311/2251/2139px，与右侧网格轨道完全一致；收起后为 2559px。1440/1024/390/320px 均无横向溢出，移动端底图左边界为 0；已检查 420px 与收起状态截图，原两侧黑空白带消失。
+- **验收命令**：上述定向测试、`node --check web/assets/study.js`、`git diff --check -- web/assets/study.css` 均 exit 0；临时 CDP 验收脚本、截图与 8366 服务已清理。**未测/受限**：未跑全量 `npm test`，真实模型与云存储未测。**本次没做**：未修前序既有失败、未改业务 schema、依赖、发布或其他并行未提交成果。
+
+## 卡 R6 · 首页虹彩毛玻璃卡片与随机羽毛（2026-11-25）
+
+- **交付**：首页项目卡片改为两列自适应网格（≤767px 单列），使用松绿、薰衣草紫与香槟金的半透明分层渐变、20px 模糊饱和度、内高光和环境光晕；标签、标题、元信息与底部分成清晰层级，置顶/改名/删除移入常显胶囊操作区，整卡链接仍可点击且不遮挡按钮。`src/web/model.ts` 新增按项目 ID 稳定生成的羽毛配色、位置、尺度、光晕与轻微角度参数；`study.js` 用原创内联 SVG 绘制单一深裂羽缘、长羽轴与弧形羽枝，避免叶片式圆润轮廓和歪扭随机角度，每张卡随机但刷新不跳变。保留森林主题、暗色、减少动效、减少透明度、高对比与强制颜色降级。
+- **离线测试**：新增 `tests/web-home-glass.test.ts` 6 项，覆盖随机羽毛结构、SVG 无障碍属性、卡片分层与点击层级、玻璃材质、双列/单列响应式及降级偏好；`web-model.test.ts` 增补轮廓范围与多样性断言。`node --test tests/web-model.test.ts tests/web-home-glass.test.ts` = **24/24 pass、exit 0**。
+- **浏览器实测（本机无头 Chrome，真实 IndexedDB）**：1440×1000 为两列，前三卡坐标 `538×220`，前两卡同排、第三卡换行；390×844 为单列 `358×200`，三卡纵向堆叠。三张卡使用同一清晰的深裂羽毛结构，配色/位置/尺度与 ±4° 内轻微角度不同，均含 3 个渐变 stop；桌面羽毛 74px、手机 60px，放大候选与实际卡片截图均已目视核对为羽毛而非叶片。卡片计算样式为 `blur(20px) saturate(1.45)`。整卡链接与操作按钮命中测试通过，置顶可切换并恢复、路由不变；两档横向溢出均为 0；减少透明度时模糊与高光均关闭。已取得桌面与手机截图，验收后删除三个临时项目并关闭临时 Chrome 配置。
+- **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）、`node --check web/assets/study.js`、根目录 `git diff --check` 均 exit 0。当前混合工作区 `npm test` = **296/298 pass、exit 1**；2 项失败均非本卡：`web-ux.test.ts` 仍断言旧模型提示文案与旧根路径条件。
+- **未测/受限**：未发布线上站点；真实模型与云存储状态不变；`tsc` 未跑（依赖冻结）。**本次没做**：未修前序失败、未改业务 schema、依赖、模型服务、其他页面或站点访问范围；工作区含其他卡暂存与未提交改动，未将混合成果提交或推送。
+
+## 卡 R7 · 空态透明水晶风格统一（2026-11-25）
+
+- **交付**：无项目时的「从一篇论文开始」面板复用项目卡片 `--glass-*` 令牌，采用薰衣草紫/松绿径向渐变、斜向高光、20px 圆角、内描边、环境阴影与 20px 模糊饱和度；步骤分隔线和序号同步水晶色调，「载入演示项目」改为玻璃按钮。保留羽毛笔、内容层级及移动端淡化布局，并补充减少透明度、高对比、强制颜色和打印降级。
+- **离线测试**：`tests/web-forest-theme.test.ts` 新增空态材质与控件断言，覆盖玻璃令牌、圆角、高光、模糊、次级按钮及无障碍降级；`node --test tests/web-forest-theme.test.ts` = **7/7 pass、exit 0**。
+- **浏览器实测（127.0.0.1:8367，Headless Chrome）**：1440×1000 深浅色面板均为 20px 圆角、`blur(20px) saturate(1.45)`，玻璃按钮与项目工具条一致；390×844、320×720 无横向溢出，文字和羽毛笔保持可读；载入演示项目后切换为虹彩项目卡片，视觉语言连续。减少透明度时面板与按钮模糊均关闭。
+- **验收命令**：上述定向测试、`node --check web/assets/study.js`、`git diff --check -- web/assets/study.css` 均 exit 0；临时 CDP 脚本、截图与 8367 服务已清理。**未测/受限**：未跑全量 `npm test`，真实模型与云存储未测。**本次没做**：未修前序既有失败、未改业务 schema、依赖、发布或其他并行未提交成果。
+
 ## 卡 R8 · 羽毛迁移与树木拖动命中区（2026-11-25）
 
 - **交付**：项目卡片右上角改为透明 `sidebar-feather.png`，移除卡片羽毛 SVG；删除侧栏右下羽毛及其 SVG/PNG 回退，保留「研究库」旁的小羽毛标记。去掉侧栏右边框、拖动条伪元素线、焦点框与悬停高亮；树木贴图宽 144px，拖动命中区宽 136px，水平方向各内缩 4px。Pointer Events、键盘、宽度持久化、落叶、桌面收起与窄屏抽屉逻辑不变。
 - **离线测试**：`tests/web-sidebar.test.ts` 在隔离快照覆盖卡片 PNG 无障碍属性、侧栏羽毛移除、无分隔线/高亮、136/144px 命中区与透明素材，`node --test tests/web-sidebar.test.ts` = **12/12 pass、exit 0**；当前混合工作区与 `tests/web-home-glass.test.ts` 联合 = **16/16 pass、exit 0**。隔离快照 `npm test` = **240/240 pass、exit 0**；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
 - **浏览器实测**：当前混合工作区 1440×900 同源 iframe 中卡片羽毛为已加载的 768×1024 PNG、无 SVG；树木框 144×876px、命中区 136×844px，中心命中把手，侧栏导航仍可点击；脚本 PointerEvent 拖动 248→308px 并生成 2 片落叶，Home/ArrowRight/End 分别到 208/224/420px。隔离快照 127.0.0.1:8373 复测卡片羽毛与操作区不重叠（桌面约 3px、手机约 22px 间距），390×844 下羽毛 60px、按钮 44×44px、抽屉 260px、Escape 回焦、横向溢出 0；两轮控制台均无 error/warn，临时演示项目、iframe、页面与服务已清理。
 - **未测/受限**：in-app 浏览器视口为 0×0，截图仍返回 `NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`；以真实 DOM、计算样式、坐标与脚本事件留证，未声称可见截图或物理鼠标验收。当前混合工作区 `npm test` = **297/299 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧提示文案与旧根路径条件断言，未越界修改。真实模型、云存储与 `tsc` 未测（依赖冻结）。**本次没做**：未改业务 schema、模型服务、依赖、站点访问范围，未纳入其他未提交卡片成果。
+
+## 卡 R8 · 删除侧栏右下角羽毛装饰（2026-11-25）
+
+- **交付**：删除侧栏右下角内联 SVG 及同位置 PNG 显示节点、加载逻辑和专用样式，避免 PNG 回退继续占据该位置；保留顶部小羽毛图标、树木拖动条与落叶交互。`tests/web-sidebar.test.ts` 增加反向断言，确保右下角 SVG/PNG 节点和对应 JS/CSS 接线不再出现。
+- **离线测试**：当前工作区 `node --test tests/web-sidebar.test.ts` = **11/11 pass、exit 0**；隔离提交快照为 **10/10 pass、exit 0**。`node --check web/assets/study.js`、`npm run build:web`、`npm run verify:flow`（全部离线场景通过，真实模型未测单列）与 `git diff --check` 均 exit 0。
+- **浏览器实测（127.0.0.1:8370，同源页面 + Headless Chrome 1440×900）**：DOM 中 `svg.sidebar-feather` 与 `.sidebar-feather-image` 均为 0，顶部图标与树木 PNG 正常加载；无头截图确认右下角装饰消失。内置浏览器视口仍不可见，视觉结论来自无头 Chrome；临时页面、截图、Chrome 配置与 8370 服务已清理。
+- **全量回归**：隔离提交快照 `npm test` = **238/238 pass、exit 0**；当前混合工作区为 **297/299 pass、exit 1**，两项失败与修改前基线相同，均为 `web-ux.test.ts` 的旧模型提示文案与旧根路径条件断言，不属于本卡范围。
+- **未测/受限**：真实模型与云存储未接通；`tsc` 未跑（依赖冻结）。**本次没做**：未修前序既有失败、未改业务 schema、依赖、模型服务、发布、站点访问范围或其他并行未提交成果。
+
+## 卡 R9 · 森林侧栏无缝衔接与树木分界对齐（2026-11-25）
+
+- **交付**：有项目时森林 WebP 从侧栏边界扩展到整个 `.shell`，连续覆盖侧栏与主页；桌面侧栏改为由 94% 不透明度向左、82% 至 70% 处再向右淡出的遮罩，并提升到内容之上，保证分界命中区不被卡片遮挡。桌面内容增加 72px 左内边距，为右移后的树木预留空间；≤1199px 抽屉与 ≤767px 手机布局不受影响。树木命中区从 `right: -28px` 移至 `-64px`，144px 贴图仍相对 136px 命中区各内缩 4px。减少透明度、强制颜色与打印模式恢复纯色侧栏。
+- **离线测试**：新增 `tests/web-sidebar-forest.test.ts` 3 项，覆盖 WebP 签名、满壳底图、桌面层级/渐隐/留白、136/144px 几何关系及窄屏和无障碍降级；`web-sidebar.test.ts` 同步断言 `-64px`。隔离快照定向测试 = **15/15 pass、exit 0**，完整 `npm test` = **250/250 pass、exit 0**。
+- **浏览器实测（隔离快照 127.0.0.1:8379，Headless Chrome + CDP，真实 IndexedDB）**：默认 248px 与拖动后 320px 两档中，树木分别位于分界两侧 `-76/+68px`，分界及左右各 8px 均命中 `.sidebar-resizer`，卡片与命中区保留 8px 间隙。CDP 指针拖动 248→320px 时生成落叶，松开后持久化，刷新仍为 320；左右键、Home/End、未知键与拖动中 Escape 均通过。1024px 和 390px 抽屉宽 260px、把手隐藏、Escape/链接关闭后回焦；手机按钮 44px、内容左内边距 16px、无横向溢出。深浅色底图透明度为 0.46/0.14，手机为 0.28；减少透明度与强制颜色均隐藏底图并恢复纯色侧栏。控制台 error/warn 均为 0，深浅色与手机截图已目视核对。
+- **验收命令**：`node --test tests/web-sidebar-forest.test.ts tests/web-sidebar.test.ts`、`npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。
+- **未测/受限**：CDP 输入为自动化浏览器事件，未声称物理鼠标验收；真实模型与云存储未测，`tsc` 未跑（依赖冻结）。当前混合工作区 `npm test` = **300/302 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧模型提示文案与旧根路径条件断言。**本次没做**：未修既有失败、未改业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他并行未提交成果。
+
+## 卡 R10 · 阅读器侧栏拖动条等高与防闪烁（2026-11-25）
+
+- **根因与交付**：侧栏作为 Grid 项会被内容高度拉伸，原把手 `top/bottom: 0` 与树木 `height: calc(100% + 32px)` 因而跟随正文高度变化；原版 PDF 重绘时先清空页面再异步回填，持续拖动又反复触发宽度观察器，造成把手和树木高度反复收缩、恢复。本卡将桌面把手高度固定为 `calc(100dvh - 56px)`（保留 `100vh` 回退），移除 `bottom: 0`，使原版与文字重排共用视口高度；同时禁止阅读路由额外下移桌面侧栏。指针捕获、键盘、持久化、落叶、收起与窄屏抽屉均未改动。
+- **离线测试**：`web-sidebar.test.ts` 新增视口高度、移除内容相关底边定位及阅读路由不额外偏移的回归断言；隔离 R9 快照定向测试 = **16/16 pass、exit 0**，完整 `npm test` = **251/251 pass、fail 0、exit 0**；当前混合工作区与 `web-reader-layout.test.ts` 联合 = **23/23 pass、exit 0**。
+- **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，临时三页 PDF 与 IndexedDB 演示项目）**：修复前原版/文字重排把手分别为 1485.27/1314.39px，原版连续拖动出现 11 种高度；修复后两模式把手均为 844px、树木均为 876px，原版 147 帧与文字重排 146 帧采样高度均无变化。宽度拖动 208→268px 后持久化并清理拖动状态；ArrowRight、End、Home、桌面收起/恢复、减少动效、1199px 抽屉 Escape 回焦、390px 的 44×44px 按钮均通过，项目列表与阅读器把手位置一致，Runtime 异常与 error 日志为 0，截图已目视核对。
+- **验收命令**：隔离快照 `npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。
+- **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果；独立交付部分在已提交 R9 基线上完成全套测试与构建。
+
+## 卡 R11 · 模型服务开放公网云 API（2026-11-25）
+
+- **交付**：`src/web/model-config.ts` 将纯回环限制改为回环 HTTP 与公网 HTTPS 云 API；保存、模型列表和对话请求统一校验，拒绝公网 HTTP、私网及保留 IPv4/IPv6 地址，保留同源令牌、Bearer 鉴权、禁止重定向与服务端加密存储。`web/assets/study.js` 更新添加入口、空态、说明和存储弹层，明确云同步仍未启用；`README.md` 与模型配置测试同步更新。
+- **离线测试**：`node --test tests/model-config.test.ts tests/web-model-config.test.ts` = **11/11 pass、exit 0**，覆盖云模型列表/对话 URL、本机自定义端口、所选模型复用、公网 HTTP 与私网/保留地址拒绝、页面声明和密钥边界。`npm run build:web`、`npm run verify:flow`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
+- **浏览器实测（隔离副本 127.0.0.1:8457，未触碰真实凭据）**：通过真实 DOM 事件保存 `https://api.example.com/v1` 云服务，刷新后服务与脱敏密钥状态保留；公网 HTTP 显示「必须使用 HTTPS」，私网 HTTPS 显示「不允许连接私网或保留地址」，均未写入服务。测试密钥未出现在页面、localStorage 或凭据文件明文，控制台无 error/warn；无头 Chrome 1440×1000 截图已目视核对云 API 提示与服务卡片。内置浏览器视口为 0×0，交互由同页 DOM 事件驱动，未声称物理指针验收。
+- **全量回归**：修改前 `npm test` = **301/303 pass、exit 1**（两项既有 `web-ux` 断言漂移）；修改后复跑 = **300/304 pass、exit 1**，仍含上述两项，另新增 `web-reader-layout` 原版画布与 `web-sidebar` 拖动事件两项并发断言失败，均不涉及本次模型服务文件，未越界修改。
+- **未测/受限与交付**：未提供真实云密钥，未发起真实云请求，模型上游全部使用离线 mock；`tsc` 未跑（依赖冻结）。目标模型服务文件本身仍是前序未提交成果，当前工作区混合多卡改动，无法只提交本次差异，故未提交、未双推、未发布。**本次没做**：未改业务 schema、依赖、站点访问范围、云存储或其他卡片成果。
+
+## 卡 R12 · 论文滚动时固定侧栏拖动条（2026-11-25）
+
+- **根因与交付**：侧栏作为 Grid 项会被长正文拉伸，R10 虽已固定把手高度，但 `position: absolute; top: 0` 仍以侧栏为包含块，页面滚动时把手与树木一起上移。本卡改为桌面 `position: fixed; top: 56px`，水平位置用 `left: calc(var(--sidebar-width) - 6px)` 跟随栏宽；树木加载后的命中区改为 `left: calc(var(--sidebar-width) - 72px)`，与原 `right: -64px; width: 136px` 几何等价。保留 `100dvh - 56px` 高度、144px 树木、136px 命中区和窄屏隐藏规则。
+- **离线测试**：`web-sidebar.test.ts` 增加固定定位、顶栏下沿、栏宽公式与阅读路由回归断言，`web-sidebar-forest.test.ts` 同步水平定位断言；隔离快照定向测试 = **16/16 pass、exit 0**，完整 `npm test` = **251/251 pass、fail 0、exit 0**。`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
+- **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，有效单页 PDF 与真实 IndexedDB）**：修复前文字重排 `scrollY=700` 时把手顶从 56px 移至 -644px；修复后原版与文字重排在 `scrollY=0/400/700/1500/最大滚动` 均保持把手顶 56px、高 844px，树木顶 40px、高 876px，原版画布 735×1041px。CDP 实际指针拖动 248→308px 后把手左移至 236px、高度不变并持久化；方向键/Home/End、桌面收起恢复、1199px 抽屉隐藏与 Escape 回焦均通过，横向溢出 0，Runtime 异常 0，截图已目视核对。
+- **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果。当前混合工作区 `npm test` = **302/304 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧状态文案与旧根路径条件断言。**本次没做**：未改拖动 JS、PDF 重绘、业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果。
+
+## 卡 R13 · 原版论文侧栏拖动防闪烁（2026-11-25）
+
+- **根因与交付**：指针移动持续改变栏宽，`ResizeObserver` 随即调用整页提交；原版绘制先 `clear(sheet)` 再异步加载和离屏渲染，导致旧画布被反复销毁并出现空白帧。原版视图改为复用状态栏、页面容器、画布、高亮层与引文框，仅在首次创建或从文字重排切回时清空外框；新位图仍在离屏画布完成后同步替换同一可见画布。拖动期间按旧位图与栏宽比例做 CSS 预览，不触发 PDF 重绘；普通宽度变化用 `requestAnimationFrame` 合并，侧栏松手后派发 `agentflow:sidebar-resize-end`，仅执行一次最终全分辨率重绘。阅读器清理时取消未执行帧、断开观察器并移除事件监听。
+- **离线测试**：`web-reader-layout.test.ts` 新增画布复用、创建分支、拖动预览、rAF 合并、结束事件与正确引文参数断言；`web-sidebar.test.ts` 增补结束事件派发断言。`node --test tests/web-reader-layout.test.ts tests/web-sidebar.test.ts` = **21/21 pass、exit 0**。
+- **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，真实 IndexedDB 与 PDF.js）**：相同 25 次、每次 4px 的连续拖动中，画布销毁由基线 25 次降为 **0**，空白帧由 29 帧降为 **0**，状态节点新建 0 次，松手后仅重绘 1 次；最终画布与 CSS 宽度均为 635px，侧栏持久化 348px，状态恢复为原版页面。放大后复用同一画布，文字重排与切回原版正常，键盘 ArrowRight 调宽至 364px 时仍复用画布、仅重绘 1 次并持久化；Runtime 异常与 error 日志为 0，截图已目视核对。
+- **验收命令**：上述定向测试、`npm run build:web`、`npm run verify:flow`、`node --check web/assets/study.js`、`git diff --check -- web/assets/study.js tests/web-sidebar.test.ts docs/progress.md` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。当前混合工作区 `npm test` = **302/304 pass、exit 1**，两项仍为前序既有 `web-ux.test.ts` 旧状态文案与旧根路径条件断言。
+- **未测/受限与交付**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型与云存储未测，`tsc` 未跑（依赖冻结）。当前工作区混合多卡未提交成果，且阅读器验收依赖前序未提交代码，无法只提交本卡差异，故未提交、未双推、未发布。**本次没做**：未修前序既有失败、未改业务 schema、模型服务、依赖、站点访问范围或其他卡片成果。

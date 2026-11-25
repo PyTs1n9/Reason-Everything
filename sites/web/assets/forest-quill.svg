@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 380" fill="none">
+  <defs>
+    <linearGradient id="feather" x1="92" y1="304" x2="238" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6f8d75" stop-opacity=".28"/>
+      <stop offset=".52" stop-color="#9db6a1" stop-opacity=".64"/>
+      <stop offset="1" stop-color="#d7e5d8" stop-opacity=".74"/>
+    </linearGradient>
+    <linearGradient id="shaft" x1="69" y1="347" x2="239" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4f3d2d"/>
+      <stop offset=".55" stop-color="#8a6a45"/>
+      <stop offset="1" stop-color="#b28a58"/>
+    </linearGradient>
+    <linearGradient id="crystal" x1="238" y1="291" x2="274" y2="348" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#effff9" stop-opacity=".95"/>
+      <stop offset=".48" stop-color="#a8d8ca" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#6a9f91" stop-opacity=".42"/>
+    </linearGradient>
+    <radialGradient id="halo">
+      <stop stop-color="#b9ddca" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#b9ddca" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="181" cy="183" r="151" fill="url(#halo)"/>
+  <circle cx="181" cy="183" r="132" stroke="#6f8d75" stroke-opacity=".16" stroke-width="1" stroke-dasharray="2 9"/>
+  <path d="M57 262c35-68 91-133 179-211" stroke="#6f8d75" stroke-opacity=".12" stroke-width="1"/>
+
+  <path d="M75 314c33-36 62-82 86-124 18-33 44-79 74-138 15 28 14 63 0 94-17 38-45 75-79 107-23 23-51 45-81 61Z" fill="url(#feather)" stroke="#5f7f68" stroke-opacity=".58" stroke-width="1.4"/>
+  <path d="M75 314c23-27 43-57 60-88-20 5-39 17-55 32-17 17-29 37-35 57l30-1Z" fill="#789681" fill-opacity=".2" stroke="#5f7f68" stroke-opacity=".34" stroke-width="1.1"/>
+
+  <g stroke="#5f7f68" stroke-opacity=".4" stroke-width="1.05" stroke-linecap="round">
+    <path d="M91 295c18-4 34-14 47-28"/>
+    <path d="M105 273c24-5 45-18 61-36"/>
+    <path d="M120 249c27-7 52-22 72-43"/>
+    <path d="M136 224c29-9 55-26 77-49"/>
+    <path d="M153 198c28-10 54-28 74-51"/>
+    <path d="M170 173c26-11 49-28 68-49"/>
+    <path d="M187 148c23-10 43-25 59-43"/>
+    <path d="M204 124c19-9 35-21 48-35"/>
+    <path d="M220 101c14-8 25-17 34-28"/>
+    <path d="M91 295c-9-12-15-26-18-41"/>
+    <path d="M105 273c-8-15-12-30-13-46"/>
+    <path d="M120 249c-6-16-8-32-7-48"/>
+    <path d="M136 224c-4-17-4-33 0-48"/>
+    <path d="M153 198c-2-16 1-31 7-45"/>
+    <path d="M170 173c1-14 5-27 12-39"/>
+    <path d="M187 148c3-12 8-22 15-31"/>
+    <path d="M204 124c5-9 11-16 18-22"/>
+  </g>
+
+  <path d="M75 314c40-59 78-116 118-174 25-36 37-61 46-88" stroke="url(#shaft)" stroke-width="4.2" stroke-linecap="round"/>
+  <path d="M78 311c39-58 77-114 117-172" stroke="#f4e8cf" stroke-opacity=".45" stroke-width="1" stroke-linecap="round"/>
+
+  <path d="m75 314 13 22-17 19-13-13 17-28Z" fill="url(#shaft)" stroke="#4f3d2d" stroke-width="1.2"/>
+  <path d="m75 314 4 13 9 9-7-17-6-5Z" fill="#d8c29a" fill-opacity=".5"/>
+  <circle cx="78" cy="323" r="2.1" fill="#2f2a24"/>
+
+  <g stroke="#755b3d" stroke-opacity=".44" stroke-width="1.5" stroke-linecap="round">
+    <path d="M28 333c23-9 48-10 70-3"/>
+    <path d="M42 346c17-6 33-6 49-1"/>
+    <path d="M58 358c11-3 23-2 34 1"/>
+  </g>
+  <path d="M103 336c12 2 22 7 29 14" stroke="#3d3429" stroke-opacity=".28" stroke-width="2" stroke-linecap="round"/>
+
+  <g>
+    <path d="m250 288 20 27-13 31-22-22 15-36Z" fill="url(#crystal)" stroke="#7fae9f" stroke-opacity=".56" stroke-width="1.1"/>
+    <path d="m250 288 7 27 13 0-20-27Z" fill="#f4fffb" fill-opacity=".68"/>
+    <path d="m257 315 13 0-13 31-1-17-12-5 13-9Z" fill="#6e9e91" fill-opacity=".28"/>
+    <path d="m278 316 12 17-8 19-14-14 10-22Z" fill="url(#crystal)" stroke="#7fae9f" stroke-opacity=".48" stroke-width="1"/>
+    <path d="m278 316 4 14 8 3-12-17Z" fill="#f4fffb" fill-opacity=".62"/>
+    <path d="m232 322 9 11-6 14-10-10 7-15Z" fill="#b8ddd1" fill-opacity=".48" stroke="#7fae9f" stroke-opacity=".4" stroke-width="1"/>
+  </g>
+
+  <g fill="#eafff5">
+    <path d="M252 56c2 9 6 13 15 15-9 2-13 6-15 15-2-9-6-13-15-15 9-2 13-6 15-15Z" fill-opacity=".82"/>
+    <path d="M287 168c1 6 4 9 10 10-6 1-9 4-10 10-1-6-4-9-10-10 6-1 9-4 10-10Z" fill-opacity=".62"/>
+    <path d="M211 28c1 4 3 6 7 7-4 1-6 3-7 7-1-4-3-6-7-7 4-1 6-3 7-7Z" fill-opacity=".5"/>
+  </g>
+</svg>

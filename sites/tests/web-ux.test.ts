@@ -5,12 +5,21 @@ import { test } from "node:test";
 import { describeCellId, evaluateEntryMissing, humanizeCellIds } from "../src/web/model.ts";
 
 const css = readFileSync(new URL("../web/assets/study.css", import.meta.url), "utf8");
+const reportCss = readFileSync(new URL("../web/assets/style.css", import.meta.url), "utf8");
 const js = readFileSync(new URL("../web/assets/study.js", import.meta.url), "utf8");
 const serve = readFileSync(new URL("../scripts/serve-web.mjs", import.meta.url), "utf8");
 
 /** 取选择器规则体（这些规则内无嵌套花括号）。 */
 function ruleBody(source: string, selector: string): string {
   const at = source.indexOf(selector);
+  assert.notEqual(at, -1, `缺少规则 ${selector}`);
+  const open = source.indexOf("{", at);
+  const close = source.indexOf("}", open);
+  return source.slice(open + 1, close);
+}
+
+function lastRuleBody(source: string, selector: string): string {
+  const at = source.lastIndexOf(selector);
   assert.notEqual(at, -1, `缺少规则 ${selector}`);
   const open = source.indexOf("{", at);
   const close = source.indexOf("}", open);
@@ -121,6 +130,46 @@ test("项目卡片操作区：置顶、重命名和删除默认常显，不依�
   assert.match(ruleBody(css, ".card-actions {"), /opacity:\s*1/);
   assert.doesNotMatch(css, /\.card-actions\s*\{[^}]*opacity:\s*0/);
   assert.ok(js.includes('h("div", { class: "card-actions" }, pinBtn, renameBtn, deleteBtn)'));
+});
+
+test("扇叶强调：三联形状、主题色与柔和投影，且不拦截交互", () => {
+  const fan = ruleBody(css, ".side-link::before,");
+  assert.match(fan, /conic-gradient\(/s);
+  assert.match(fan, /from 0deg at 0 100%/);
+  assert.match(fan, /var\(--fan-color, var\(--brand\)\)/);
+  assert.match(fan, /drop-shadow\(0 3px 3px[^;]+drop-shadow\(0 0 7px/s);
+  assert.match(fan, /pointer-events:\s*none/);
+  assert.ok(css.includes(".notice::before"));
+  assert.ok(css.includes(".paper-tab::before"));
+  assert.match(css, /\.paper-tab\s*\{[^}]*padding-left:\s*38px/s);
+  assert.match(ruleBody(css, ".project-paper-title {"), /--fan-size:\s*24px/);
+  assert.match(ruleBody(css, ".project-paper-title {"), /background:\s*transparent/);
+  assert.ok(css.includes(".project-paper-title::before"));
+  const reportFan = ruleBody(reportCss, ".paper::before,");
+  assert.match(reportFan, /conic-gradient\(/s);
+  assert.match(reportFan, /var\(--fan-color, var\(--site-accent\)\)/);
+  assert.match(reportFan, /drop-shadow\(0 3px 3px[^;]+drop-shadow\(0 0 7px/s);
+});
+
+test("高亮竖线退场：方框与当前导航不再使用左侧强调条", () => {
+  assert.doesNotMatch(css, /box-shadow:\s*inset 3px 0 0 var\(--brand\)/);
+  assert.doesNotMatch(css, /border-left-color:\s*var\(--brand\)/);
+  assert.doesNotMatch(css, /border-left:\s*2px solid transparent/);
+  assert.doesNotMatch(lastRuleBody(css, ".paper-tab.is-active {"), /border-left|box-shadow:\s*inset/);
+  assert.doesNotMatch(reportCss, /box-shadow:\s*inset [23]px 0 0 var\(--site-accent\)/);
+  assert.doesNotMatch(ruleBody(reportCss, ".kpi {"), /border-left/);
+  assert.doesNotMatch(ruleBody(reportCss, ".card-item {"), /border-left/);
+  assert.doesNotMatch(ruleBody(reportCss, ".paper.active {"), /box-shadow:\s*inset/);
+  assert.doesNotMatch(ruleBody(reportCss, ".toc__link[aria-current=\"true\"] {"), /box-shadow:\s*inset/);
+  assert.doesNotMatch(reportCss, /border-left-color:\s*var\(--(?:risk|gold)\)/);
+});
+
+test("扇叶状态：当前项增强，错误/风险/警告继承语义色", () => {
+  assert.match(ruleBody(css, ".side-link[aria-current=\"page\"],"), /--fan-opacity:\s*1/);
+  assert.match(ruleBody(css, ".notice-error {"), /--fan-color:\s*var\(--danger\)/);
+  assert.match(ruleBody(reportCss, ".kpi--bad {"), /--fan-color:\s*var\(--risk\)/);
+  assert.match(ruleBody(reportCss, ".kpi--warn {"), /--fan-color:\s*var\(--gold\)/);
+  assert.match(ruleBody(reportCss, ".card-item.unverified {"), /--fan-color:\s*var\(--risk\)/);
 });
 
 test("本地服务：根路径 302 到 /web/index.html（相对资源不再 404）", () => {

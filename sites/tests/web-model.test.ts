@@ -5,6 +5,7 @@ import type { ProjectSummary } from "../src/experiment/storage.ts";
 import type { TrainingRun } from "../src/experiment/types.ts";
 import {
   buildSideTree,
+  cardFeatherVariant,
   computeDashboardStats,
   deriveLrOptions,
   evaluateEntryMissing,
@@ -307,4 +308,28 @@ test("PDF 题名：元数据优先，退回首页非空行，均无返回空串�
   assert.equal(extractPaperTitle({}), "");
   assert.equal(extractPaperTitle({ metaTitle: "", firstPageText: "   \n\n" }), "");
   assert.equal(extractPaperTitle({ metaTitle: "x".repeat(200) }).length, 120);
+});
+
+test("卡片羽毛：同一项目稳定复现，不同项目产生随机配色与轻微几何变化", () => {
+  const first = cardFeatherVariant("p_demo");
+  assert.deepEqual(cardFeatherVariant("p_demo"), first);
+  const variants = Array.from({ length: 12 }, (_, index) => cardFeatherVariant(`project-${index}`));
+  assert.ok(new Set(variants.map((item) => item.colors.join(","))).size > 1);
+  assert.ok(new Set(variants.map((item) => item.rotate)).size > 1);
+  assert.ok(new Set(variants.map((item) => item.scale)).size > 1);
+  assert.ok(new Set(variants.map((item) => `${item.x},${item.y}`)).size > 1);
+  assert.equal(new Set(variants.map((item) => item.id)).size, variants.length);
+  for (const item of variants) {
+    assert.match(item.id, /^[0-9a-z]+$/);
+    assert.equal(item.colors.length, 3);
+    for (const color of item.colors) assert.match(color, /^#[0-9a-f]{6}$/i);
+    assert.ok(item.x >= 12 && item.x <= 23);
+    assert.ok(item.y >= 10 && item.y <= 21);
+    assert.ok(item.scale >= 0.9 && item.scale <= 1.04);
+    assert.ok(item.rotate >= -4 && item.rotate <= 4);
+    assert.ok(item.angle >= 112 && item.angle <= 128);
+    assert.ok(item.glowX >= 22 && item.glowX <= 87);
+    assert.ok(item.glowY >= 12 && item.glowY <= 49);
+  }
+  assert.deepEqual(cardFeatherVariant(""), cardFeatherVariant(""));
 });

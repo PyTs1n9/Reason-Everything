@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "AgentFlow 的 Qoder Sites 版本：Deno Edge Function + 托管数据库",
+  "description": "AgentFlow 的本地研究工作台：静态前端 + 本机同源模型服务",
   "engines": {
     "node": ">=22.18"
   },

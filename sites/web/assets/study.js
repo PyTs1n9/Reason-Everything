@@ -27,6 +27,9 @@ import {
   statusGlyph,
   typeColorClass,
   buildSaveModeInfo,
+  cardFeatherVariant,
+  countPaperChars,
+  paragraphizePage,
 } from "./gen/src/web/model.js";
 import {
   SIDEBAR_COLLAPSED_KEY,
@@ -36,16 +39,13 @@ import {
   parseSidebarWidth,
   sidebarWidthFromKey,
 } from "./gen/src/web/sidebar.js";
-import { createLiteratureClient } from "./gen/src/web/literature.js";
-import { extractPaperPages, generatePaperCandidates, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
+import { codePointSlice, locate } from "./gen/src/core/grounding.js";
+import { extractPaperPages, generatePaperCandidates, verifyPaperQuote, PAPER_MODEL_PATH } from "./gen/src/web/paper-study.js";
 import { locateInRegions, locateInTextItems } from "./gen/src/web/paper-locate.js";
-import {
-  pagesNeedingOcr,
-  paperPageSource,
-  readOcrRequest,
-  requestPaperOcr,
-  toPaperRegions,
-} from "./gen/src/web/paper-ocr.js";
+import { pagesNeedingOcr, paperPageSource, readOcrRequest, requestPaperOcr, toPaperRegions } from "./gen/src/web/paper-ocr.js";
+import { createAgentService } from "./gen/src/agent/service.js";
+import { createSameOriginModelAdapter } from "./gen/src/web/model-adapter.js";
+import { MODEL_CONFIG_PATH } from "./gen/src/web/model-config-path.js";
 
 const DB_NAME = "agentflow-study";
 const ACTOR = { userId: "local" };
@@ -54,8 +54,59 @@ const backend = createIndexedDBBackend(indexedDB, DB_NAME);
 const data = createDataService(backend);
 const wfDeps = { storage: data, agent: null, now: () => new Date().toISOString() };
 const wf = createWorkflowService(wfDeps);
-// 验收驱动口：仅允许注入模型适配器（wfDeps.agent 生产恒为 null=未接通），供离线 mock 驱动 UI 验收；
-// 注入的输出以 provider=mock 标识展示，不冒充真实模型输出。
+let localTokenPromise = null;
+
+async function localToken() {
+  if (!localTokenPromise) {
+    localTokenPromise = fetch("/__agentflow_local.json", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("本地模型服务未启动");
+        const payload = await response.json();
+        if (typeof payload.token !== "string" || !payload.token) throw new Error("本地服务身份信息无效");
+        return payload.token;
+      })
+      .catch((error) => {
+        localTokenPromise = null;
+        throw error;
+      });
+  }
+  return localTokenPromise;
+}
+
+async function setAgent(enabled) {
+  wfDeps.agent = enabled
+    ? createAgentService(createSameOriginModelAdapter(fetch), { timeoutMs: 70_000 })
+    : null;
+}
+
+async function refreshAgent() {
+  try {
+    const snapshot = await modelConfigRequest("GET");
+    await setAgent(Boolean(snapshot.activeServiceId));
+    return snapshot;
+  } catch {
+    await setAgent(false);
+    throw new Error("本地模型服务未启动，请先运行 node scripts/serve-web.mjs");
+  }
+}
+
+async function modelConfigRequest(method, path = "", body) {
+  const send = async (token) => fetch(`${MODEL_CONFIG_PATH}${path}`, {
+    method,
+    headers: { "content-type": "application/json", "x-agentflow-local-token": token },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  let response = await send(await localToken());
+  if (response.status === 401) {
+    localTokenPromise = null;
+    response = await send(await localToken());
+  }
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `模型服务请求失败（HTTP ${response.status}）`);
+  return payload;
+}
+
+// 验收驱动口：生产使用同源模型适配器；测试可注入 mock，输出始终标 mock。
 globalThis.__agentflow = { wfDeps };
 
 const main = document.getElementById("main");
@@ -95,7 +146,8 @@ async function openSaveModePop() {
     clear(saveModePop);
     const facts = h("dl");
     for (const row of info.rows) facts.append(h("dt", { text: row.label }), h("dd", { text: row.value }));
-    saveModePop.append(facts, h("p", { class: "aux save-pop-note", text: info.note }));
+    saveModePop.append(facts, h("p", { class: "aux save-pop-note", text: info.note }),
+      h("p", { class: "aux save-pop-note", text: "云同步尚未启用；模型配置仅保存在本地服务端，研究数据仍保存在当前浏览器。" }));
   } catch (error) {
     if (saveModePop.hidden) return;
     clear(saveModePop);
@@ -144,8 +196,16 @@ function h(tag, attrs = {}, ...children) {
   return node;
 }
 
-function badge(status) {
-  const { glyph, text } = statusGlyph(status);
+/** 内联图标：SVG 字符串来自本文件常量，不接受外部输入。 */
+function icon(svg) {
+  const box = document.createElement("span");
+  box.className = "icon-box";
+  box.setAttribute("aria-hidden", "true");
+  box.innerHTML = svg;
+  return box;
+}
+
+function badge(status) {  const { glyph, text } = statusGlyph(status);
   const shapeClass =
     status === "reviewable" ? "badge-reviewable" : status === "waiting_for_run" ? "badge-waiting" : "badge-needs";
   return h("span", { class: `badge ${shapeClass}` }, h("span", { class: "shape", "aria-hidden": "true", text: glyph }), text);
@@ -314,7 +374,25 @@ function attachModalBehavior(overlay, modal, close) {
 function parseRoute() {
   const hash = location.hash || "#/";
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  if (parts[0] === "project" && parts[1]) return { view: "project", projectId: parts[1], page: Number(parts[2]) || 0 };
+  if (parts[0] === "models") return { view: "models" };
+  if (parts[0] === "project" && parts[1]) {
+    if (parts[2] === "paper" && parts[3]) {
+      return {
+        view: "project",
+        projectId: parts[1],
+        paper: parts[3],
+        page: Number(parts[4]) || 0,
+        cite: parts[5] ? decodeURIComponent(parts[5]) : null,
+      };
+    }
+    return {
+      view: "project",
+      projectId: parts[1],
+      paper: parts[4] || null,
+      page: Number(parts[2]) || 0,
+      cite: parts[3] ? decodeURIComponent(parts[3]) : null,
+    };
+  }
   if (parts[0] === "new" && parts[1]) return { view: "newQuestion", projectId: parts[1] };
   if (parts[0] === "question" && parts[1]) return { view: "question", questionId: parts[1] };
   return { view: "projects" };
@@ -327,12 +405,14 @@ async function render() {
   topbarBack.hidden = route.view !== "project";
   closeNav();
   closeSaveModePop();
+  cleanupPaperReader();
   clear(main);
   try {
     if (route.view === "projects") await renderProjects();
+    else if (route.view === "models") await renderModels();
     else if (route.view === "project") {
       currentProjectId = route.projectId;
-      await renderProject(route.projectId, route.page);
+      await renderProject(route.projectId, route.page, route.cite, route.paper);
     } else if (route.view === "newQuestion") {
       currentProjectId = route.projectId;
       await renderNewQuestion(route.projectId);
@@ -367,7 +447,8 @@ async function renderSidebar(route) {
   // 当前项目所在文件夹默认展开，便于定位
   if (activeProjectId) collapsedProjectIds.delete(activeProjectId);
 
-  const rootLink = h("a", { class: "side-link side-root", href: "#/", text: "📚 研论书屋" });
+  const rootLink = h("a", { class: "side-link side-root", href: "#/" },
+    icon(ICON_LIBRARY), h("span", { class: "side-name", text: "全部项目" }));
   if (route.view === "projects") rootLink.setAttribute("aria-current", "page");
   nav.append(rootLink);
 
@@ -395,44 +476,45 @@ async function renderSidebar(route) {
   }
 
   for (const node of tree) {
-    const expanded = !collapsedProjectIds.has(node.projectId);
+    const hasQuestions = node.questions.length > 0;
+    const expanded = hasQuestions && !collapsedProjectIds.has(node.projectId);
     const childBox = h("div", { class: "tree-children", role: "group", hidden: !expanded });
 
-    const toggle = h("button", {
-      class: "tree-toggle",
-      type: "button",
-      "aria-expanded": String(expanded),
-      "aria-label": `${expanded ? "折叠" : "展开"}项目 ${node.name}`,
-      text: expanded ? "▾" : "▸",
-    });
+    const toggle = hasQuestions
+      ? h("button", {
+        class: "tree-toggle",
+        type: "button",
+        "aria-expanded": String(expanded),
+        "aria-label": `${expanded ? "折叠" : "展开"}项目 ${node.name}`,
+        text: expanded ? "▾" : "▸",
+      })
+      : h("span", { class: "tree-toggle tree-toggle--empty", "aria-hidden": "true" });
     const projectLink = h("a", {
       class: "side-link tree-project",
       href: `#/project/${node.projectId}`,
-    }, "📁 ", node.name);
+    }, icon(ICON_FOLDER), h("span", { class: "side-name", text: node.name }));
     if (activeProjectId === node.projectId) projectLink.setAttribute("aria-current", "page");
 
-    toggle.addEventListener("click", () => {
-      const nowExpanded = childBox.hidden;
-      childBox.hidden = !nowExpanded;
-      toggle.setAttribute("aria-expanded", String(nowExpanded));
-      toggle.textContent = nowExpanded ? "▾" : "▸";
-      toggle.setAttribute("aria-label", `${nowExpanded ? "折叠" : "展开"}项目 ${node.name}`);
-      if (nowExpanded) collapsedProjectIds.delete(node.projectId);
-      else collapsedProjectIds.add(node.projectId);
-    });
+    if (hasQuestions) {
+      toggle.addEventListener("click", () => {
+        const nowExpanded = childBox.hidden;
+        childBox.hidden = !nowExpanded;
+        toggle.setAttribute("aria-expanded", String(nowExpanded));
+        toggle.textContent = nowExpanded ? "▾" : "▸";
+        toggle.setAttribute("aria-label", `${nowExpanded ? "折叠" : "展开"}项目 ${node.name}`);
+        if (nowExpanded) collapsedProjectIds.delete(node.projectId);
+        else collapsedProjectIds.add(node.projectId);
+      });
+    }
 
     for (const question of node.questions) {
       const docLink = h("a", {
         class: "side-question tree-doc",
         href: `#/question/${question.questionId}`,
-      }, "📄 ", question.label);
+      }, icon(ICON_FILE), h("span", { class: "side-name", text: question.label }));
       if (activeQuestionId === question.questionId) docLink.setAttribute("aria-current", "page");
       childBox.append(docLink);
     }
-    if (node.questions.length === 0) {
-      childBox.append(h("span", { class: "aux tree-doc-empty", text: "暂无研究问题" }));
-    }
-
     listBox.append(
       h("div", { class: "tree-node", role: "treeitem", "aria-expanded": String(expanded) },
         h("div", { class: "tree-row" }, toggle, projectLink),
@@ -451,7 +533,13 @@ const ICON_PLUS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke=
 const ICON_PIN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
 const ICON_EDIT = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>';
 const ICON_TRASH = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
-
+const ICON_LIBRARY = '<svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>';
+const ICON_FOLDER = '<svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const ICON_FILE = '<svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const ICON_SLIDERS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>';
+const ICON_SEARCH = '<svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+const ICON_PREV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+const ICON_NEXT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
 const ICON_PANEL_CLOSE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 9-3 3 3 3"/></svg>';
 const ICON_PANEL_OPEN = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m12 9 3 3-3 3"/></svg>';
 
@@ -493,7 +581,10 @@ function saveProjectType(projectId, type) {
   }
 }
 
+let projectListSeq = 0;
+
 async function renderProjects() {
+  const seq = ++projectListSeq;
   const searchInput = h("input", {
     type: "search",
     id: "projectSearch",
@@ -502,24 +593,25 @@ async function renderProjects() {
     autocomplete: "off",
     "aria-label": "搜索项目，快捷键 Ctrl K",
   });
-  const searchBox = h("div", { class: "search-box" },
+  const searchBox = h("div", { class: "search-box workbench-search" },
+    icon(ICON_SEARCH),
     searchInput,
     h("kbd", { class: "search-kbd", "aria-hidden": "true", text: "Ctrl K" }),
   );
   const newProjectBtn = h("button", {
-    class: "btn btn-primary btn-new-project",
+    class: "btn btn-new-project",
     type: "button",
     id: "newProjectBtn",
   });
   newProjectBtn.insertAdjacentHTML("afterbegin", ICON_PLUS);
   newProjectBtn.append("新建项目");
 
-  const importPdfBtn = h("button", { class: "btn btn-quiet", type: "button", id: "importPdfBtn" });
+  const importPdfBtn = h("button", { class: "btn btn-primary", type: "button", id: "importPdfBtn" });
   importPdfBtn.insertAdjacentHTML("afterbegin", ICON_UPLOAD);
   importPdfBtn.append("导入 PDF");
-  const fetchPaperBtn = h("button", { class: "btn btn-quiet", type: "button", id: "fetchPaperBtn" });
-  fetchPaperBtn.insertAdjacentHTML("afterbegin", ICON_GLOBE);
-  fetchPaperBtn.append("抓取文献");
+  const modelBtn = h("button", { class: "btn btn-quiet", type: "button", id: "modelConfigBtn" });
+  modelBtn.insertAdjacentHTML("afterbegin", ICON_SLIDERS);
+  modelBtn.append("模型服务");
   const pdfInput = h("input", {
     type: "file",
     id: "pdfFileInput",
@@ -529,21 +621,35 @@ async function renderProjects() {
     tabindex: "-1",
   });
 
-  const kpiRow = h("div", { class: "kpi-row", id: "kpiRow", "aria-label": "工作台统计" });
-  const hero = h("div", { class: "hero" },
-    h("h1", { text: "研究项目" }),
-    h("p", { class: "hero-sub", text: "记录实验归因主张，用对照证据回答「是不是真的」。" }),
-    kpiRow,
-    searchBox,
+  const actionGroup = h("div", {
+    class: "head-actions workbench-actions",
+    role: "group",
+    "aria-label": "工作台操作",
+  }, importPdfBtn, newProjectBtn, modelBtn, pdfInput);
+  const tools = h("div", {
+    class: "workbench-tools",
+    role: "group",
+    "aria-label": "项目搜索与工作台操作",
+  }, searchBox, actionGroup);
+  const kpiRow = h("div", { class: "stat-row", id: "kpiRow", "aria-label": "工作台统计" });
+  const head = h("header", { class: "workbench-head" },
+    h("div", { class: "workbench-title" },
+      h("p", { class: "eyebrow", text: "工作台" }),
+      h("h1", { text: "研究项目" }),
+      h("p", { class: "lede", text: "把论文读成可检验的主张：每条结论，都要有对照证据。" }),
+      kpiRow,
+    ),
+    tools,
   );
-  const panel = h("div", { class: "dash-panel" },
-    h("div", { class: "quick-actions" }, importPdfBtn, fetchPaperBtn, newProjectBtn, pdfInput),
+  const sectionTitle = h("h2", { class: "section-title", id: "recentTitle", text: "最近更新", hidden: true });
+  const listToolbar = h("div", { class: "workbench-list-head", id: "listToolbar" },
+    sectionTitle,
+    h("p", { class: "list-count", id: "projectCount" }),
   );
 
   const gridHost = h("div", { id: "projectGridHost" });
   const emptyHost = h("div", { id: "projectEmptyHost" });
-  const sectionTitle = h("h2", { class: "section-title", id: "recentTitle", text: "最近更新", hidden: true });
-  main.append(hero, panel, sectionTitle, gridHost, emptyHost);
+  main.append(head, listToolbar, gridHost, emptyHost);
 
   let allProjects = [];
   let pinnedIds = loadPinnedIds();
@@ -563,10 +669,22 @@ async function renderProjects() {
       { label: "研究问题", value: stats.questionCount },
       { label: "近 7 天更新", value: stats.weekUpdated },
     ]) {
-      const num = h("span", { class: "kpi-num", text: "0" });
-      kpiRow.append(h("div", { class: "kpi" }, num, h("span", { class: "kpi-label", text: item.label })));
+      const num = h("span", { class: "stat-num", text: "0" });
+      kpiRow.append(h("div", { class: "stat" }, num, h("span", { class: "stat-label", text: item.label })));
       countUp(num, item.value);
     }
+  }
+
+  function featherFor(projectId) {
+    const variant = cardFeatherVariant(projectId);
+    return h("img", {
+      class: "card-feather",
+      src: "./assets/sidebar-feather.png",
+      alt: "",
+      draggable: "false",
+      "aria-hidden": "true",
+      style: `--feather-x:${variant.x}px;--feather-y:${variant.y}px;--feather-scale:${variant.scale};--feather-rotate:${variant.rotate}deg`,
+    });
   }
 
   function cardFor(project, index, animate) {
@@ -576,6 +694,7 @@ async function renderProjects() {
     const total = project.questionCount;
     const pending = project.pendingCount;
     const pct = total > 0 ? Math.round(((total - pending) / total) * 100) : 0;
+    const featherVariant = cardFeatherVariant(project.projectId);
 
     const pinBtn = h("button", {
       class: "card-action",
@@ -628,34 +747,32 @@ async function renderProjects() {
         seg.hit ? h("mark", { class: "card-hit", text: seg.text }) : seg.text),
     );
 
-    return h("div", {
+    return h("article", {
       class: animate ? "project-card project-card--enter" : "project-card",
       dataset: { projectId: project.projectId },
-      style: `--card-i:${index}`,
+      style: `--card-i:${index};--feather-a:${featherVariant.colors[0]};--feather-b:${featherVariant.colors[1]};--feather-c:${featherVariant.colors[2]};--card-orb-x:${featherVariant.glowX}%;--card-orb-y:${featherVariant.glowY}%`,
     },
-      h("img", {
-        class: "card-feather",
-        src: "./assets/sidebar-feather.png",
-        alt: "",
-        draggable: "false",
-        "aria-hidden": "true",
-      }),
+      featherFor(project.projectId),
       h("div", { class: "card-top" },
         h("span", { class: `card-tag ${typeColorClass(tag)}`, text: tag }),
+      ),
+      h("div", { class: "card-body" },
+        nameNode,
+        h("div", { class: "card-meta" },
+          h("span", { text: `研究问题 ${total}` }),
+          pending > 0 ? h("span", { class: "card-pending", text: `${pending} 待补跑` }) : null,
+          h("span", { text: formatUpdatedAt(project.updatedAt) }),
+        ),
+      ),
+      h("div", { class: "card-footer" },
+        h("div", {
+          class: "card-progress",
+          role: "img",
+          "aria-label": `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
+          title: `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
+        }, h("div", { class: "card-progress-bar", style: `width:${pct}%` })),
         h("div", { class: "card-actions" }, pinBtn, renameBtn, deleteBtn),
       ),
-      nameNode,
-      h("span", { class: "card-meta" },
-        h("span", { class: "card-count", text: `研究问题 ${total}` }),
-        h("span", { class: "card-pending", text: pending > 0 ? `待补跑 ${pending}` : "无待补跑" }),
-        h("span", { class: "card-time", text: formatUpdatedAt(project.updatedAt) }),
-      ),
-      h("div", {
-        class: "card-progress",
-        role: "img",
-        "aria-label": `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
-        title: `研究问题 ${total} 个，其中待补跑 ${pending} 个`,
-      }, h("div", { class: "card-progress-bar", style: `width:${pct}%` })),
     );
   }
 
@@ -665,21 +782,31 @@ async function renderProjects() {
     clear(gridHost);
     clear(emptyHost);
     renderKpis();
+    searchBox.hidden = allProjects.length === 0;
+    listToolbar.hidden = allProjects.length === 0;
     sectionTitle.hidden = allProjects.length === 0;
+    document.getElementById("projectCount").textContent =
+      allProjects.length === 0 ? "" : `${list.length} 个项目`;
 
     if (allProjects.length === 0) {
+      const emptyImport = h("button", { class: "btn btn-primary", type: "button", id: "emptyImport", text: "导入 PDF" });
+      emptyImport.addEventListener("click", () => pdfInput.click());
       emptyHost.append(
-        h("div", { class: "empty" },
-          h("p", { text: "还没有研究项目" }),
+        h("div", { class: "empty empty--start" },
+          h("p", { class: "eyebrow", text: "第一步" }),
+          h("h2", { text: "从一篇论文开始" }),
+          h("p", { class: "empty-lede", text: "导入带文字层的 PDF，工作台会保存逐页正文，并把可检验的结论整理成候选研究问题。" }),
+          h("ol", { class: "empty-steps" },
+            h("li", {}, h("strong", { text: "导入 PDF" }), h("span", { text: "逐页保存正文，文件不上传" })),
+            h("li", {}, h("strong", { text: "核对候选" }), h("span", { text: "对照原文页码，删改后确认" })),
+            h("li", {}, h("strong", { text: "验证主张" }), h("span", { text: "用对照实验回答是不是真的" })),
+          ),
           h("div", { class: "empty-actions" },
-            h("button", { class: "btn btn-primary", type: "button", id: "emptyNewProject", text: "＋ 新建项目" }),
+            emptyImport,
             h("button", { class: "btn", type: "button", id: "loadDemo", text: "载入演示项目" }),
           ),
         ),
       );
-      document.getElementById("emptyNewProject").addEventListener("click", (event) => {
-        openCreateProjectModal(event.currentTarget);
-      });
       document.getElementById("loadDemo").addEventListener("click", async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -745,8 +872,8 @@ async function renderProjects() {
     pdfInput.value = "";
     if (file) importPdfFile(file, importPdfBtn);
   });
-  fetchPaperBtn.addEventListener("click", (event) => {
-    openFetchPaperModal(event.currentTarget);
+  modelBtn.addEventListener("click", () => {
+    location.hash = "#/models";
   });
   searchInput.addEventListener("input", () => {
     updateGrid();
@@ -760,6 +887,7 @@ async function renderProjects() {
   });
 
   allProjects = await wf.listProjects(ACTOR);
+  if (seq !== projectListSeq) return;
   await updateGrid();
 
   // Ctrl K：从其他视图跳回项目列表后聚焦搜索框
@@ -838,15 +966,10 @@ function openCreateProjectModal(trigger, options = {}) {
       if (options.paperMeta) savePaperImport(project.projectId, options.paperMeta);
       closeCreateProjectModal(false);
       location.hash = `#/project/${project.projectId}`;
-      const ocrDone = options.ocrOptIn && options.paperFile
+      const ocrDone = options.ocrOptIn
         ? startPaperOcr(project.projectId, options.paperFile.bytes, pagesNeedingOcr(options.paper), options.paper.sha256)
         : Promise.resolve();
-      if (autoGenerate?.input.checked) {
-        void ocrDone.then(async () => {
-          const latest = await data.getPaperStudy(ACTOR, project.projectId);
-          if (latest && paperHasReadableText(latest)) await startPaperGeneration(project.projectId, latest);
-        }).catch((error) => toast(`生成失败：${error.message || String(error)}`, "bad"));
-      }
+      if (autoGenerate?.input.checked) void ocrDone.then(() => startPaperGeneration(project.projectId, options.paper));
     } catch (createError) {
       confirmBtn.disabled = false;
       error.hidden = false;
@@ -998,7 +1121,7 @@ function openImportResultModal({ file, bytes, paper, textChars, title, sha256, t
   const autoGenerate = restore ? paperGenerationChoice() : null;
   const error = h("p", { class: "field-error", role: "alert", hidden: true });
   const useBtn = h("button", {
-    class: "btn btn-primary", type: "button", id: "importUseTitle", text: restore ? "补录到当前项目" : "用 PDF 新建项目",
+    class: "btn btn-primary", type: "button", id: "importUseTitle", text: restore ? (restore.meta ? "补录到当前项目" : "加入当前项目") : "用 PDF 新建项目",
   });
   useBtn.addEventListener("click", async () => {
     const nextName = titleInput.value.trim() || file.name.replace(/\.pdf$/i, "");
@@ -1008,18 +1131,18 @@ function openImportResultModal({ file, bytes, paper, textChars, title, sha256, t
       useBtn.disabled = true;
       error.hidden = true;
       try {
+        const duplicate = (await data.listPaperStudies(ACTOR, restore.projectId)).some((item) => item.sha256 === sha256);
         await data.importPaper(ACTOR, { name: nextName, paper: nextPaper, now: new Date().toISOString(), projectId: restore.projectId, file: paperFile });
         closeImportResultModal(false);
-        const ocrDone = ocrOptIn.checked
-          ? startPaperOcr(restore.projectId, bytes, pendingPages, sha256)
-          : Promise.resolve();
-        if (autoGenerate.input.checked) {
-          void ocrDone.then(async () => {
-            const latest = await data.getPaperStudy(ACTOR, restore.projectId);
-            if (latest && paperHasReadableText(latest)) await startPaperGeneration(restore.projectId, latest);
-          }).catch((saveError) => toast(`生成失败：${saveError.message || String(saveError)}`, "bad"));
+        if (ocrOptIn.checked) void startPaperOcr(restore.projectId, bytes, pendingPages, sha256);
+        if (autoGenerate.input.checked) void startPaperGeneration(restore.projectId, nextPaper);
+        toast(duplicate ? "该 PDF 已在项目文献中，已复用原有记录" : "PDF 已加入当前项目", "ok");
+        if (restore.returnQuestionId) {
+          await renderQuestion(restore.returnQuestionId);
+        } else {
+          location.hash = projectPaperHash(restore.projectId, nextPaper, 1);
+          await render();
         }
-        if (parseRoute().projectId === restore.projectId) await render();
       } catch (saveError) {
         error.hidden = false;
         error.textContent = saveError.message;
@@ -1153,14 +1276,75 @@ function startPaperOcr(projectId, bytes, pageNumbers, sha256) {
   return promise;
 }
 
+const pdfDocumentCache = new Map();
+
+function loadPdfDocument(file) {
+  const key = file.sha256 || file.filename;
+  let pending = pdfDocumentCache.get(key);
+  if (!pending) {
+    pending = loadPdfLib().then((pdfjsLib) => pdfjsLib.getDocument({
+      data: file.bytes.slice(),
+      cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
+      cMapPacked: true,
+      standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
+    }).promise);
+    pdfDocumentCache.set(key, pending);
+    pending.catch(() => pdfDocumentCache.delete(key));
+  }
+  return pending;
+}
+
+async function renderPdfPageCanvas({ page, pageNumber, paper, quote, canvas, pageHost, highlights, scale, isCurrent }) {
+  if (!isCurrent()) return null;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const viewport = page.getViewport({ scale: scale * dpr });
+  const buffer = document.createElement("canvas");
+  buffer.width = Math.ceil(viewport.width);
+  buffer.height = Math.ceil(viewport.height);
+  const render = page.render({ canvasContext: buffer.getContext("2d", { alpha: false }), viewport });
+  await render.promise;
+  if (!isCurrent()) return null;
+  let located = null;
+  if (quote) {
+    const source = paperPageSource(paper, pageNumber - 1);
+    if (source === "ocr" && paper.pageRegions?.[pageNumber - 1]?.length) {
+      located = locateInRegions(paper.pageRegions[pageNumber - 1], quote);
+    } else {
+      const content = await page.getTextContent();
+      located = locateInTextItems(content.items, quote, viewport);
+    }
+    if (!isCurrent()) return null;
+  }
+  canvas.width = buffer.width;
+  canvas.height = buffer.height;
+  canvas.style.width = `${viewport.width / dpr}px`;
+  canvas.style.height = `${viewport.height / dpr}px`;
+  canvas.getContext("2d", { alpha: false }).drawImage(buffer, 0, 0);
+  pageHost.style.width = canvas.style.width;
+  pageHost.style.height = canvas.style.height;
+  clear(highlights);
+  for (const rect of located?.rects ?? []) {
+    highlights.append(h("div", {
+      class: "pdf-highlight",
+      style: `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.width * 100}%;height:${rect.height * 100}%`,
+    }));
+  }
+  return { located };
+}
+
 let pdfViewerState = null;
+let activePaperReaderCleanup = null;
+
+function cleanupPaperReader() {
+  activePaperReaderCleanup?.();
+  activePaperReaderCleanup = null;
+}
 
 function closePdfViewer(restoreFocus = true) {
   const current = pdfViewerState;
   if (!current) return;
   current.closed = true;
   current.seq += 1;
-  if (current.task) void current.task.destroy();
   current.overlay.remove();
   pdfViewerState = null;
   if (restoreFocus && current.trigger?.isConnected) current.trigger.focus();
@@ -1204,10 +1388,10 @@ async function openPdfViewer(paper, file, pageNumber, quote = null, trigger = nu
     quoteBox,
   );
   attachModalBehavior(overlay, modal, () => closePdfViewer());
+  document.body.append(overlay);
   const state = {
     overlay,
     trigger,
-    task: null,
     pdf: null,
     page: Math.min(paper.pages.length, Math.max(1, pageNumber)),
     quote,
@@ -1217,45 +1401,28 @@ async function openPdfViewer(paper, file, pageNumber, quote = null, trigger = nu
   };
   pdfViewerState = state;
   close.addEventListener("click", () => closePdfViewer());
-  close.focus();
 
   const draw = async () => {
     if (!state.pdf || state.closed) return;
     const seq = ++state.seq;
     const page = await state.pdf.getPage(state.page);
+    if (state.closed || seq !== state.seq) return;
     const base = page.getViewport({ scale: 1 });
     if (state.zoom === null) state.zoom = Math.min(2.5, Math.max(0.5, (stage.clientWidth - 48) / base.width));
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const viewport = page.getViewport({ scale: state.zoom * dpr });
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    canvas.style.width = `${viewport.width / dpr}px`;
-    canvas.style.height = `${viewport.height / dpr}px`;
-    pageHost.style.width = canvas.style.width;
-    pageHost.style.height = canvas.style.height;
-    clear(highlights);
     precision.textContent = `第 ${state.page} / ${paper.pages.length} 页 · 正在渲染…`;
-    const render = page.render({ canvasContext: canvas.getContext("2d", { alpha: false }), viewport });
-    await render.promise;
-    if (state.closed || seq !== state.seq) return;
-    let located = null;
-    if (state.quote) {
-      const source = paperPageSource(paper, state.page - 1);
-      if (source === "ocr" && paper.pageRegions?.[state.page - 1]?.length) {
-        located = locateInRegions(paper.pageRegions[state.page - 1], state.quote);
-      } else {
-        const content = await page.getTextContent();
-        if (state.closed || seq !== state.seq) return;
-        located = locateInTextItems(content.items, state.quote, viewport);
-      }
-      for (const rect of located.rects) {
-        highlights.append(h("div", {
-          class: "pdf-highlight",
-          style: `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.width * 100}%;height:${rect.height * 100}%`,
-        }));
-      }
-    }
-    precision.textContent = `第 ${state.page} / ${paper.pages.length} 页${located ? ` · ${located.reason}` : " · 原版页面"}`;
+    const result = await renderPdfPageCanvas({
+      page,
+      pageNumber: state.page,
+      paper,
+      quote: state.quote,
+      canvas,
+      pageHost,
+      highlights,
+      scale: state.zoom,
+      isCurrent: () => !state.closed && seq === state.seq,
+    });
+    if (!result) return;
+    precision.textContent = `第 ${state.page} / ${paper.pages.length} 页${result.located ? ` · ${result.located.reason}` : " · 原版页面"}`;
     prev.disabled = state.page <= 1;
     next.disabled = state.page >= paper.pages.length;
   };
@@ -1288,14 +1455,7 @@ async function openPdfViewer(paper, file, pageNumber, quote = null, trigger = nu
   });
 
   try {
-    const pdfjsLib = await loadPdfLib();
-    state.task = pdfjsLib.getDocument({
-      data: file.bytes.slice(),
-      cMapUrl: new URL("./vendor/cmaps/", import.meta.url).href,
-      cMapPacked: true,
-      standardFontDataUrl: new URL("./vendor/standard_fonts/", import.meta.url).href,
-    });
-    state.pdf = await state.task.promise;
+    state.pdf = await loadPdfDocument(file);
     if (!state.closed) await draw();
   } catch (error) {
     if (!state.closed) precision.textContent = `原版页面打开失败：${error.message || String(error)}`;
@@ -1443,138 +1603,360 @@ function closeDeleteProjectModal(restoreFocus = true) {
   if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
 }
 
-// ---------- 抓取文献（Crossref 公共 API，仅取元数据不取全文） ----------
+// ---------- 模型服务配置（仅本地同源接口） ----------
 
-let fetchModalState = null;
+let modelViewSeq = 0;
 
-function openFetchPaperModal(trigger) {
-  closeFetchPaperModal(false);
-  const overlay = h("div", { class: "modal-overlay", id: "fetchModalOverlay" });
-  const modal = h("div", {
-    class: "modal modal--wide",
-    id: "fetchModal",
-    role: "dialog",
-    "aria-modal": "true",
-    "aria-labelledby": "fetchModalTitle",
-    tabindex: "-1",
+async function renderModels() {
+  const seq = ++modelViewSeq;
+  const status = h("p", { class: "aux", role: "status", text: "读取中…" });
+  const serviceList = h("div", { class: "model-services" });
+  const addBtn = h("button", {
+    class: "btn btn-primary", type: "button", id: "addModelService", text: "＋ 添加服务",
+    "aria-expanded": "false", "aria-controls": "addModelServicePanel",
   });
-
-  const client = createLiteratureClient((url, init) => fetch(url, init));
-  const doiInput = h("input", {
-    type: "text",
-    id: "fetchDoi",
-    autocomplete: "off",
-    placeholder: "如 10.1234/abcde",
-    "aria-label": "DOI",
+  const back = h("a", { class: "back-link", href: "#/", text: "← 返回项目列表" });
+  const addName = h("input", {
+    type: "text", id: "addModelName", value: "模型服务", maxlength: 80,
+    autocomplete: "off", required: true, "aria-label": "新服务名称",
   });
-  const doiBtn = h("button", { class: "btn btn-primary", type: "button", id: "fetchDoiBtn", text: "按 DOI 抓取" });
-  const queryInput = h("input", {
-    type: "text",
-    id: "fetchQuery",
-    autocomplete: "off",
-    placeholder: "标题关键词",
-    "aria-label": "标题关键词",
+  const addBaseUrl = h("input", {
+    type: "url", id: "addModelBaseUrl", maxlength: 500, required: true,
+    placeholder: "本机 HTTP 或云 API HTTPS 地址", autocomplete: "off", "aria-label": "新服务 Base URL",
   });
-  const queryBtn = h("button", { class: "btn", type: "button", id: "fetchQueryBtn", text: "按标题检索" });
-  const status = h("p", { class: "aux fetch-status", role: "status" });
-  const results = h("div", { class: "fetch-results" });
-  const closeBtn = h("button", { class: "btn", type: "button", id: "fetchClose", text: "关闭" });
-
-  function fetchItem(info) {
-    const useBtn = h("button", { class: "btn btn-primary", type: "button", text: "用此文献新建项目" });
-    const item = h("div", { class: "fetch-item" },
-      h("p", { class: "fetch-item-title", text: info.title }),
-      h("p", { class: "aux", text: [info.authors, info.year, info.venue].filter(Boolean).join(" · ") || "（缺作者/年份/出处）" }),
-      h("p", { class: "aux mono", text: info.doi ? `DOI ${info.doi}` : "无 DOI" }),
-      h("div", { class: "suggestion-actions" }, useBtn),
-    );
-    useBtn.addEventListener("click", () => {
-      closeFetchPaperModal(false);
-      openCreateProjectModal(trigger, {
-        prefillName: info.title,
-        paperMeta: {
-          source: "crossref",
-          doi: info.doi,
-          title: info.title,
-          authors: info.authors,
-          year: info.year,
-          venue: info.venue,
-        },
-      });
-    });
-    return item;
-  }
-
-  async function runFetch(button, action) {
-    button.disabled = true;
-    status.classList.remove("fetch-error");
-    status.textContent = "抓取中…";
-    clear(results);
-    try {
-      const list = await action();
-      for (const info of list) results.append(fetchItem(info));
-      status.textContent = list.length > 0 ? `共 ${list.length} 条结果` : "没有找到匹配文献";
-    } catch (error) {
-      status.textContent = error && error.message ? error.message : String(error);
-      status.classList.add("fetch-error");
-    } finally {
-      button.disabled = false;
-    }
-  }
-
-  doiBtn.addEventListener("click", () => {
-    runFetch(doiBtn, async () => [await client.fetchByDoi(doiInput.value)]);
+  const addKey = h("input", {
+    type: "password", id: "addModelKey", maxlength: 4000, required: true,
+    autocomplete: "new-password", "aria-label": "新服务 API Key",
   });
-  queryBtn.addEventListener("click", () => {
-    runFetch(queryBtn, () => client.searchByTitle(queryInput.value));
+  const addReveal = h("button", { class: "btn btn-small", type: "button", text: "显示", "aria-pressed": "false" });
+  addReveal.addEventListener("click", () => {
+    const visible = addKey.type === "text";
+    addKey.type = visible ? "password" : "text";
+    addReveal.textContent = visible ? "显示" : "隐藏";
+    addReveal.setAttribute("aria-pressed", String(!visible));
   });
-  doiInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      doiBtn.click();
-    }
-  });
-  queryInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      queryBtn.click();
-    }
-  });
-  closeBtn.addEventListener("click", () => closeFetchPaperModal());
-
-  modal.append(
-    h("h2", { id: "fetchModalTitle", text: "抓取文献" }),
-    h("p", { class: "aux", text: "来源 Crossref 公共接口，仅获取文献元数据（题名/作者/年份/出处），不抓取全文。" }),
-    h("div", { class: "parse-line" },
-      h("div", { class: "field" },
-        h("label", { for: "fetchDoi", text: "DOI 精确查询" }),
-        doiInput,
-      ),
-      doiBtn,
+  const addError = h("p", { class: "field-error", role: "alert", hidden: true });
+  const addCancel = h("button", { class: "btn", type: "button", text: "取消" });
+  const addSave = h("button", { class: "btn btn-primary", type: "submit", text: "保存服务" });
+  const addForm = h("form", { class: "model-add-form", id: "addModelServiceForm" },
+    h("div", { class: "model-form-grid" },
+      h("div", { class: "field" }, h("label", { for: addName.id, text: "服务名称" }), addName),
+      h("div", { class: "field" }, h("label", { for: addBaseUrl.id, text: "Base URL" }), addBaseUrl),
     ),
-    h("div", { class: "parse-line" },
-      h("div", { class: "field" },
-        h("label", { for: "fetchQuery", text: "标题关键词检索" }),
-        queryInput,
+    h("div", { class: "field" },
+      h("label", { for: addKey.id, text: "API Key" }),
+      h("div", { class: "model-key-row" }, addKey, addReveal),
+      h("span", { class: "model-key-state", text: "只发送到本机服务端并加密保存，不写入浏览器存储。" }),
+    ),
+    addError,
+    h("div", { class: "model-add-actions" }, addSave, addCancel),
+  );
+  const addPanel = h("section", {
+    class: "model-add-panel", id: "addModelServicePanel", "aria-labelledby": "addModelServiceTitle", hidden: true,
+  },
+    h("h2", { id: "addModelServiceTitle", text: "添加模型服务" }),
+    h("p", { class: "aux", text: "填写兼容 OpenAI 风格的服务地址；本机可使用 HTTP，云 API 必须使用 HTTPS。" }),
+    addForm,
+  );
+  const closeAdd = () => {
+    addPanel.hidden = true;
+    addBtn.setAttribute("aria-expanded", "false");
+    addError.hidden = true;
+    addError.textContent = "";
+  };
+  addBtn.addEventListener("click", () => {
+    if (addPanel.hidden) {
+      addPanel.hidden = false;
+      addBtn.setAttribute("aria-expanded", "true");
+      addName.focus();
+    } else {
+      closeAdd();
+      addBtn.focus();
+    }
+  });
+  addCancel.addEventListener("click", () => {
+    closeAdd();
+    addBtn.focus();
+  });
+  addPanel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    closeAdd();
+    addBtn.focus();
+  });
+  addForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    addError.hidden = true;
+    addSave.disabled = true;
+    addSave.textContent = "保存中…";
+    try {
+      const next = await modelConfigRequest("POST", "", {
+        name: addName.value,
+        baseUrl: addBaseUrl.value,
+        apiKey: addKey.value,
+      });
+      const added = next.services.at(-1);
+      await applySnapshot(next);
+      addName.value = "模型服务";
+      addBaseUrl.value = "";
+      addKey.value = "";
+      addKey.type = "password";
+      addReveal.textContent = "显示";
+      addReveal.setAttribute("aria-pressed", "false");
+      closeAdd();
+      if (added) {
+        stateByService.set(added.id, { expanded: true, loading: false, searched: false, error: "" });
+        draw();
+      }
+      toast(`已添加「${added?.name ?? "模型服务"}」`, "ok");
+      addBtn.focus();
+    } catch (error) {
+      addError.hidden = false;
+      addError.textContent = error.message;
+    } finally {
+      addSave.disabled = false;
+      addSave.textContent = "保存服务";
+    }
+  });
+
+  main.append(back,
+    h("header", { class: "page-head" },
+      h("div", { class: "field", style: "gap:6px" },
+        h("h1", { text: "模型服务" }),
+        h("p", { class: "aux", text: "添加兼容 OpenAI 风格的本机或云端模型服务，已选模型将用于问题分析与论文候选生成。" }),
       ),
-      queryBtn,
+      addBtn,
+    ),
+    h("div", { class: "notice", role: "note" },
+      h("strong", { text: "支持本机与云 API" }),
+      h("p", { text: "支持本机 HTTP 和公网 HTTPS 云 API，私网与保留地址仍被阻止。API Key 加密保存在运行工作台的本机服务端，不会回传到浏览器；研究数据仍保存在当前浏览器。" }),
     ),
     status,
-    results,
-    h("div", { class: "modal-actions" }, closeBtn),
+    addPanel,
+    serviceList,
   );
 
-  fetchModalState = { trigger, overlay };
-  attachModalBehavior(overlay, modal, closeFetchPaperModal);
-  doiInput.focus();
-}
+  let snapshot = { services: [], activeServiceId: null };
+  const modelsByService = new Map();
+  const stateByService = new Map();
 
-function closeFetchPaperModal(restoreFocus = true) {
-  const current = fetchModalState;
-  if (!current) return;
-  current.overlay.remove();
-  fetchModalState = null;
-  if (restoreFocus && current.trigger && current.trigger.isConnected) current.trigger.focus();
+  async function applySnapshot(next) {
+    snapshot = next;
+    await setAgent(Boolean(snapshot.activeServiceId));
+    status.classList.remove("field-error");
+    status.textContent = snapshot.services.length
+      ? `已配置 ${snapshot.services.length} 个服务；当前使用 ${snapshot.services.find((item) => item.id === snapshot.activeServiceId)?.name ?? "未选择"}。`
+      : "还没有模型服务，请先添加一个模型服务。";
+    draw();
+    return snapshot;
+  }
+
+  async function reload() {
+    status.textContent = "读取中…";
+    try {
+      return await applySnapshot(await modelConfigRequest("GET"));
+    } catch (error) {
+      await setAgent(false);
+      status.textContent = error.message;
+      status.classList.add("field-error");
+      return null;
+    }
+  }
+
+  function card(service) {
+    const state = stateByService.get(service.id) ?? { expanded: false, loading: false, searched: false, error: "" };
+    stateByService.set(service.id, state);
+    const active = snapshot.activeServiceId === service.id;
+    const models = modelsByService.get(service.id) ?? [];
+    const cardNode = h("article", { class: "model-card", dataset: { serviceId: service.id } });
+    const toggle = h("button", {
+      class: "model-card-toggle", type: "button", "aria-expanded": String(state.expanded), "aria-controls": `model-details-${service.id}`,
+    }, h("span", { class: "model-card-title", text: service.name }),
+      h("span", { class: `model-card-meta${active ? " is-active" : ""}`, text: active ? "使用中" : "未选择" }),
+      h("span", { class: "model-card-meta", text: `${models.length} 个模型` }),
+      h("span", { class: "model-card-chevron", "aria-hidden": "true", text: state.expanded ? "▾" : "▸" }));
+    toggle.addEventListener("click", () => {
+      state.expanded = !state.expanded;
+      toggle.setAttribute("aria-expanded", String(state.expanded));
+      toggle.querySelector(".model-card-chevron").textContent = state.expanded ? "▾" : "▸";
+      details.hidden = !state.expanded;
+    });
+
+    const name = h("input", { type: "text", id: `model-name-${service.id}`, value: service.name, maxlength: 80, autocomplete: "off", "aria-label": "服务名称" });
+    const baseUrl = h("input", { type: "url", id: `model-url-${service.id}`, value: service.baseUrl, maxlength: 500, autocomplete: "off", "aria-label": "Base URL" });
+    const keyInput = h("input", { type: "password", id: `model-key-${service.id}`, placeholder: service.hasApiKey ? service.apiKeyHint : "请输入 API Key", autocomplete: "new-password", maxlength: 4000, "aria-label": "API Key" });
+    const reveal = h("button", { class: "btn btn-small", type: "button", text: "显示", "aria-pressed": "false" });
+    reveal.addEventListener("click", () => {
+      const visible = keyInput.type === "text";
+      keyInput.type = visible ? "password" : "text";
+      reveal.textContent = visible ? "显示" : "隐藏";
+      reveal.setAttribute("aria-pressed", String(!visible));
+    });
+    const configured = h("span", { class: "model-key-state", text: service.hasApiKey ? `已配置 ${service.apiKeyHint}` : "未配置" });
+    const save = h("button", { class: "btn btn-primary", type: "button", text: "保存" });
+    const search = h("button", { class: "btn", type: "button", disabled: state.loading, text: state.loading ? "搜索中…" : "搜索模型" });
+    const remove = h("button", { class: "btn btn-danger", type: "button", text: "删除" });
+    const error = h("p", { class: "field-error", role: "alert", hidden: true });
+    const searchStatus = h("p", { class: "aux", role: "status" });
+    const deleteConfirm = h("div", { class: "model-delete-confirm", role: "group", "aria-label": "确认删除模型服务", hidden: true },
+      h("p", { text: `删除「${service.name}」？本机服务端保存的 API Key 也会一并移除。` }),
+      h("div", { class: "model-delete-actions" },
+        h("button", { class: "btn btn-danger", type: "button", id: `confirm-delete-${service.id}`, text: "确认删除" }),
+        h("button", { class: "btn", type: "button", id: `cancel-delete-${service.id}`, text: "取消" }),
+      ),
+    );
+
+    function updateSearchStatus() {
+      searchStatus.classList.toggle("field-error", Boolean(state.error));
+      searchStatus.textContent = state.loading
+        ? "正在请求模型列表…"
+        : state.error || (state.searched ? `已找到 ${models.length} 个模型` : "保存后可搜索模型。");
+    }
+    function showError(message) {
+      state.error = message;
+      error.hidden = false;
+      error.textContent = message;
+      updateSearchStatus();
+    }
+    function clearError() {
+      state.error = "";
+      error.hidden = true;
+      error.textContent = "";
+      updateSearchStatus();
+    }
+    updateSearchStatus();
+
+    const modelSelect = h("select", { id: `model-select-${service.id}`, "aria-label": "选择模型" },
+      h("option", { value: "", text: service.model ? `当前：${service.model}` : "请选择模型" }),
+      ...models.filter((id) => id !== service.model).map((id) => h("option", { value: id, text: id })),
+    );
+    modelSelect.value = service.model;
+    modelSelect.addEventListener("change", async () => {
+      if (await persistService()) toast("已切换当前模型", "ok");
+    });
+
+    const details = h("div", { class: "model-details", id: `model-details-${service.id}`, hidden: !state.expanded },
+      h("div", { class: "model-form-grid" },
+        h("div", { class: "field" }, h("label", { for: name.id, text: "服务名称" }), name),
+        h("div", { class: "field" }, h("label", { for: baseUrl.id, text: "Base URL" }), baseUrl),
+      ),
+      h("div", { class: "field" },
+        h("label", { for: keyInput.id, text: "API Key" }),
+        h("div", { class: "model-key-row" }, keyInput, reveal),
+        configured,
+      ),
+      h("div", { class: "model-actions" }, save, search, remove),
+      error,
+      h("div", { class: "field" }, h("label", { for: modelSelect.id, text: "模型选择" }), modelSelect),
+      searchStatus,
+      h("div", { class: "model-options", role: "listbox", "aria-label": "可用模型" },
+        models.length
+          ? models.map((id) => h("button", {
+              class: `model-option${id === service.model ? " is-selected" : ""}`, type: "button", role: "option",
+              "aria-selected": String(id === service.model), text: id,
+              onclick: () => { modelSelect.value = id; modelSelect.dispatchEvent(new Event("change")); },
+            }))
+          : h("p", { class: "aux", text: state.searched ? "模型列表为空。" : "尚未搜索模型。" }),
+      ),
+      deleteConfirm,
+    );
+
+    async function persistService() {
+      clearError();
+      save.disabled = true;
+      search.disabled = true;
+      try {
+        const next = await modelConfigRequest("POST", "", {
+          serviceId: service.id,
+          name: name.value,
+          baseUrl: baseUrl.value,
+          apiKey: keyInput.value,
+          model: modelSelect.value,
+        });
+        keyInput.value = "";
+        await applySnapshot(next);
+        toast(`已保存「${next.services.find((item) => item.id === service.id)?.name ?? name.value.trim()}」`, "ok");
+        return next.services.find((item) => item.id === service.id) ?? null;
+      } catch (saveError) {
+        showError(saveError.message);
+        return null;
+      } finally {
+        save.disabled = false;
+        search.disabled = state.loading;
+      }
+    }
+
+    save.addEventListener("click", () => { void persistService(); });
+
+    search.addEventListener("click", async () => {
+      const changed = name.value.trim() !== service.name || baseUrl.value.trim() !== service.baseUrl || Boolean(keyInput.value);
+      state.loading = true;
+      clearError();
+      search.disabled = true;
+      search.textContent = "搜索中…";
+      try {
+        if (changed && !await persistService()) return;
+        const result = await modelConfigRequest("POST", "/models", { serviceId: service.id });
+        modelsByService.set(service.id, result.models);
+        state.searched = true;
+      } catch (searchError) {
+        showError(searchError.message);
+      } finally {
+        state.loading = false;
+        search.disabled = false;
+        search.textContent = "搜索模型";
+        updateSearchStatus();
+        draw();
+      }
+    });
+
+    remove.addEventListener("click", () => {
+      state.expanded = true;
+      details.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.querySelector(".model-card-chevron").textContent = "▾";
+      deleteConfirm.hidden = false;
+      deleteConfirm.querySelector(".btn-danger").focus();
+    });
+    deleteConfirm.querySelector(".btn:not(.btn-danger)").addEventListener("click", () => {
+      deleteConfirm.hidden = true;
+      remove.focus();
+    });
+    deleteConfirm.querySelector(".btn-danger").addEventListener("click", async () => {
+      const confirm = deleteConfirm.querySelector(".btn-danger");
+      const cancel = deleteConfirm.querySelector(".btn:not(.btn-danger)");
+      confirm.disabled = true;
+      cancel.disabled = true;
+      remove.disabled = true;
+      try {
+        const next = await modelConfigRequest("DELETE", `/${encodeURIComponent(service.id)}`);
+        stateByService.delete(service.id);
+        modelsByService.delete(service.id);
+        await applySnapshot(next);
+        toast(`已删除「${service.name}」`, "ok");
+      } catch (removeError) {
+        showError(removeError.message);
+        confirm.disabled = false;
+        cancel.disabled = false;
+        remove.disabled = false;
+      }
+    });
+
+    cardNode.append(toggle, details);
+    return cardNode;
+  }
+
+  function draw() {
+    if (seq !== modelViewSeq) return;
+    clear(serviceList);
+    if (!snapshot.services.length) {
+      serviceList.append(h("div", { class: "empty" }, h("p", { text: "暂无模型服务" })));
+      return;
+    }
+    snapshot.services.forEach((service) => serviceList.append(card(service)));
+  }
+
+  await reload();
 }
 
 /** Ctrl K 全局快捷键：任意视图聚焦项目搜索（不在项目列表则先跳回）。 */
@@ -1599,26 +1981,23 @@ window.addEventListener("keydown", (event) => {
 // ---------- 视图 2：项目详情 ----------
 
 function paperGenerationChoice() {
-  const input = h("input", { type: "checkbox", checked: true });
-  return { input, label: h("label", { class: "paper-opt-in" }, input, "自动生成研究问题（逐批将论文文字发送给模型服务）") };
-}
-
-function paperHasReadableText(paper) {
-  return paper.pages.some((text, index) => {
-    const source = paper.pageSources?.[index] ?? (text.trim() ? "text" : "pending");
-    return (source === "text" || source === "ocr") && text.trim();
-  });
+  const input = h("input", { type: "checkbox", checked: true });  return { input, label: h("label", { class: "paper-opt-in" }, input, "自动生成研究问题（逐批将论文文字发送给模型服务）") };
 }
 
 const paperJobs = new Map();
 
 async function requestPaperModel(input) {
-  const response = await fetch(PAPER_MODEL_PATH, {
+  const send = async (token) => fetch(PAPER_MODEL_PATH, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-agentflow-local-token": token },
     body: JSON.stringify(input),
     signal: AbortSignal.timeout(70_000),
   });
+  let response = await send(await localToken());
+  if (response.status === 401) {
+    localTokenPromise = null;
+    response = await send(await localToken());
+  }
   if (response.status === 404 || response.status === 405 || !response.headers.get("content-type")?.includes("application/json")) {
     throw new Error("站点的论文模型接口未接通，全文已保存在本机");
   }
@@ -1629,54 +2008,115 @@ async function requestPaperModel(input) {
 }
 
 async function startPaperGeneration(projectId, paper) {
-  if (paperJobs.get(projectId)?.running) return;
+  const jobKey = `${projectId}:${paper.sha256}`;
+  if (paperJobs.get(jobKey)?.running) return;
   const job = { running: true, text: "正在准备论文文字…" };
-  paperJobs.set(projectId, job);
-  const onProject = () => parseRoute().view === "project" && parseRoute().projectId === projectId;
+  paperJobs.set(jobKey, job);
+  const onProject = () => parseRoute().view === "project" && parseRoute().projectId === projectId
+    && (!parseRoute().paper || parseRoute().paper === paper.sha256);
   try {
     const generate = async () => {
-      const current = await data.getPaperStudy(ACTOR, projectId);
-      if (current?.generation?.candidates.length) return;
-      const generated = await generatePaperCandidates(current ?? paper, requestPaperModel, (batch) => {
+      const study = await data.getPaperStudy(ACTOR, projectId, paper?.sha256);
+      if (study?.generation?.candidates.length) return;
+      if (!study) throw new Error("项目文献不存在");
+      const generated = await generatePaperCandidates(study, requestPaperModel, (batch) => {
         job.text = `模型正在阅读第 ${batch} 批论文文字…`;
         const status = document.getElementById("paperGenerationStatus");
         if (onProject() && status) status.textContent = job.text;
       });
-      await data.savePaperCandidates(ACTOR, projectId, generated);
+      await data.savePaperCandidates(ACTOR, projectId, generated, study.sha256);
     };
-    if (navigator.locks) await navigator.locks.request(`paper-model-${projectId}`, generate);
+    if (navigator.locks) await navigator.locks.request(`paper-model-${jobKey}`, generate);
     else await generate();
-    paperJobs.delete(projectId);
+    paperJobs.delete(jobKey);
   } catch (error) {
-    paperJobs.set(projectId, { running: false, text: error.message });
+    paperJobs.set(jobKey, { running: false, text: error.message });
   }
   if (onProject()) await render();
 }
 
-function renderPaperEvidence(paper, candidate, storedFile = null) {
-  const citations = h("ul", { class: "paper-citations" });
-  for (const evidence of candidate.citations) {
-    const sourceLink = h("a", { href: `#/project/${paper.projectId}/${evidence.page}`, text: `PDF 第 ${evidence.page} 页` });
-    sourceLink.addEventListener("click", async (event) => {
-      event.preventDefault();
-      const file = storedFile ?? await data.getPaperFile(ACTOR, paper.projectId, paper.sha256);
-      if (!file) {
-        toast("请先补传原 PDF，才能查看原版页面", "bad");
-        location.hash = `#/project/${paper.projectId}/${evidence.page}`;
-        return;
-      }
-      await openPdfViewer(paper, file, evidence.page, evidence.quote, sourceLink);
-    });
-    citations.append(h("li", {}, sourceLink, h("blockquote", { text: evidence.quote })));
+function projectPaperHash(projectId, paper, page = 1, cite = null) {
+  return `#/project/${projectId}/paper/${paper.sha256}/${page}${cite ? `/${encodeURIComponent(cite)}` : ""}`;
+}
+
+function paperEvidenceRef(questionId, evidenceId) {
+  return `e:${questionId}:${evidenceId}`;
+}
+
+/** 引文引用号：c<候选序号>-<引文序号>；只用于站内定位，不进存储契约。 */
+function citationRef(candidateIndex, citationIndex) {
+  return `c${candidateIndex + 1}-${citationIndex + 1}`;
+}
+
+function citationForRef(paper, ref) {
+  const match = /^c(\d+)-(\d+)$/.exec(ref ?? "");
+  if (!match) return null;
+  return paper.generation?.candidates[Number(match[1]) - 1]?.citations[Number(match[2]) - 1] ?? null;
+}
+
+/** 在段落文本中标出引文；定位失败时原样输出，不伪造高亮。 */
+function fillWithQuote(node, text, quote) {
+  const span = quote ? locate(text, quote) : null;
+  if (!span) {
+    node.textContent = text;
+    return false;
   }
+  const length = Array.from(text).length;
+  const before = codePointSlice(text, 0, span[0]);
+  const hit = codePointSlice(text, span[0], span[1]);
+  const after = codePointSlice(text, span[1], length);
+  if (before) node.append(before);
+  node.append(h("mark", { class: "sheet-mark" }, hit));
+  if (after) node.append(after);
+  return true;
+}
+
+function factRow(label, value) {
+  return h("div", { class: "candidate-fact" },
+    h("dt", { text: label }),
+    h("dd", { text: value }),
+  );
+}
+
+function renderPaperEvidence(paper, candidate, candidateIndex) {
+  const resolvedIndex = candidateIndex ?? paper.generation?.candidates.findIndex((item) => item.id === candidate.id) ?? 0;
   return [
-    h("dl", { class: "import-facts" },
-      h("dt", { text: "待检验主张" }), h("dd", { text: candidate.claim }),
-      h("dt", { text: "研究价值" }), h("dd", { text: candidate.rationale }),
-      h("dt", { text: "验证方法" }), h("dd", { text: candidate.verification }),
+    h("dl", { class: "candidate-facts" },
+      factRow("待检验主张", candidate.claim),
+      factRow("研究价值", candidate.rationale),
+      factRow("验证方法", candidate.verification),
     ),
-    citations,
+    h("ul", { class: "cite-list" },
+      ...candidate.citations.map((citation, citationIndex) => {
+        const href = projectPaperHash(paper.projectId, paper, citation.page, citationRef(resolvedIndex, citationIndex));
+        const link = h("a", {
+          class: "cite-chip",
+          href,
+          title: `定位到第 ${citation.page} 页的引文`,
+        }, `第 ${citation.page} 页`);
+        link.addEventListener("click", async (event) => {
+          event.preventDefault();
+          const file = await data.getPaperFile(ACTOR, paper.projectId, paper.sha256);
+          if (!file) {
+            toast("请先补传原 PDF，才能查看原版页面", "bad");
+            location.hash = href;
+            return;
+          }
+          await openPdfViewer(paper, file, citation.page, citation.quote, link);
+        });
+        return h("li", {}, link, h("blockquote", { class: "cite-quote", text: citation.quote }));
+      }),
+    ),
   ];
+}
+
+/** 项目名与论文题名高度重合时只显示一次，避免同一行标题上下重复。 */
+function samePaperTitle(left, right) {
+  const norm = (value) => (value || "").replace(/[\s·—–\-_/（）()：:，,。.]/g, "").toLowerCase();
+  const a = norm(left);
+  const b = norm(right);
+  if (!a || !b) return false;
+  return a === b || (a.length > 4 && b.length > 4 && (a.includes(b) || b.includes(a)));
 }
 
 function renderPaperOcrPanel(paper, file) {
@@ -1692,9 +2132,9 @@ function renderPaperOcrPanel(paper, file) {
   if (!file) {
     return h("section", { class: "ocr-panel", "aria-labelledby": "ocrPanelTitle" },
       h("div", { class: "ocr-panel-head" },
-        h("div", {},
+        h("div", { class: "ocr-panel-copy" },
           h("h3", { id: "ocrPanelTitle", text: "原版与扫描识别" }),
-          h("p", { class: "aux", text: "旧记录未保存 PDF 字节。补传同一原文件后可查看原版页面和精确高亮，已有问题与引文不会丢失。" }),
+          h("p", { class: "rail-note", text: "旧记录未保存 PDF 字节。补传同一原文件后可查看原版页面和精确高亮，已有问题与引文不会丢失。" }),
         ),
         h("div", { class: "empty-actions" }, reupload, reuploadInput),
       ),
@@ -1721,15 +2161,13 @@ function renderPaperOcrPanel(paper, file) {
       return h("li", { class: `ocr-page-row is-${source}` },
         h("span", { class: "ocr-page-no", text: `第 ${index + 1} 页` }),
         h("span", { class: `status-badge is-${source}`, text: labels[source] }),
-        error
-          ? h("span", { class: "ocr-page-error", text: error })
-          : h("span", { class: "ocr-page-detail", text: source === "text" ? "无需 OCR" : source === "ocr" ? "已保存识别文字与区域" : "尚未取得可用文字" }),
+        error ? h("span", { class: "ocr-page-error", text: error }) : h("span", { class: "ocr-page-detail", text: source === "text" ? "无需 OCR" : source === "ocr" ? "已保存识别文字与区域" : "尚未取得可用文字" }),
         retry,
       );
     }),
   );
   const status = h("p", {
-    class: job?.error ? "field-error" : "aux",
+    class: job?.error ? "field-error" : "rail-note",
     role: "status",
     text: job?.running ? `${job.text}（第 ${job.current} / ${job.total} 页）` : job?.error || job?.text || "仅发送没有可用文字层的页面；单页失败不会影响其他页。",
   });
@@ -1737,7 +2175,7 @@ function renderPaperOcrPanel(paper, file) {
     h("div", { class: "ocr-panel-head" },
       h("div", {},
         h("h3", { id: "ocrPanelTitle", text: "原版与扫描识别" }),
-        h("p", { class: "aux", text: `文字层 ${counts.text} · OCR ${counts.ocr} · 待识别 ${counts.pending} · 失败 ${counts.failed}` }),
+        h("p", { class: "paper-meta", text: `文字层 ${counts.text} · OCR ${counts.ocr} · 待识别 ${counts.pending} · 失败 ${counts.failed}` }),
       ),
       runAll,
     ),
@@ -1746,89 +2184,390 @@ function renderPaperOcrPanel(paper, file) {
       h("summary", { text: "逐页状态与单页重试" }),
       rows,
     ),
-    h("div", { class: "empty-actions" }, reupload, reuploadInput),
+    reupload,
+    reuploadInput,
   );
 }
 
-function renderPaperStudy(paper, initialPage, file = null) {
+function renderPaperStudy(paper, initialPage, citeRef = null, projectName = "", initialQuote = null, options = {}) {
+  const total = paper.pages.length;
+  const readable = paper.pages.filter((text) => text.trim()).length;
+  const startPage = initialPage >= 1 && initialPage <= total ? initialPage : 1;
+  const cited = citationForRef(paper, citeRef);
+  const quote = initialQuote || (cited && cited.page === startPage ? cited.quote : null);
+  const showHead = options.showHead !== false;
+  const file = options.file || null;
+  const job = paperJobs.get(`${paper.projectId}:${paper.sha256}`);
+  const generation = paper.generation;
   const statusLabels = { text: "文字层", ocr: "OCR", pending: "待识别", failed: "识别失败" };
-  const readable = paper.pages.filter((text, index) => {
-    const source = paperPageSource(paper, index);
-    return (source === "text" || source === "ocr") && text.trim();
-  }).length;
+  let readerMode = file ? "original" : "text";
+  let readerZoom = 1;
+  let currentQuote = quote;
+  let viewerSeq = 0;
+  let resizeObserver = null;
+  let resizeHandler = null;
+  let resizeFrame = 0;
+  let pendingWidth = null;
+  let observedWidth = 0;
+  let renderedPageWidth = 0;
+  let renderedPageHeight = 0;
+
+  const pageNow = h("strong", { id: "pageNow", text: String(startPage) });
+  const pageSize = h("span", { class: "reader-size", id: "pageSize" });
+  const prevBtn = h("button", { class: "page-step", type: "button", id: "pagePrev", "aria-label": "上一页", title: "上一页" }, icon(ICON_PREV));
+  const nextBtn = h("button", { class: "page-step", type: "button", id: "pageNext", "aria-label": "下一页", title: "下一页" }, icon(ICON_NEXT));
   const pagePicker = h("select", { "aria-label": "PDF 页码", id: "paperPage" },
     paper.pages.map((text, index) => h("option", {
       value: index + 1,
       text: `第 ${index + 1} 页 · ${statusLabels[paperPageSource(paper, index)]}${text.trim() ? "" : " · 无可读文字"}`,
     })),
   );
-  const pageText = h("div", { class: "import-preview paper-page-text", tabindex: "0", "aria-label": "当前页正文" });
-  const originalBtn = file ? h("button", { class: "btn", type: "button", text: "查看原版" }) : null;
-  let currentPage = paper.pages[initialPage - 1] !== undefined ? initialPage : 1;
-  originalBtn?.addEventListener("click", () => openPdfViewer(paper, file, currentPage, null, originalBtn));
-  const job = paperJobs.get(paper.projectId);
-  const generation = paper.generation;
-  const candidates = h("section", { class: "panel paper-candidates", "aria-labelledby": "paperCandidatesTitle" },
-    h("h2", { id: "paperCandidatesTitle", text: "候选研究问题" }),
-  );
-  const body = h("div", { class: "paper-study" },
-    h("section", { class: "panel", "aria-labelledby": "paperStudyTitle" },
-      h("h2", { id: "paperStudyTitle", text: "项目文献" }),
-      h("h3", { text: paper.title }),
-      h("p", { class: "aux", text: `${paper.filename} · ${readable}/${paper.pages.length} 页有可提取文字` }),
-      renderPaperOcrPanel(paper, file),
-      h("div", { class: "field paper-reader-actions", id: "paperReader" },
-        h("label", { for: "paperPage", text: "查看正文" }),
-        pagePicker,
-        originalBtn,
+  const originalModeBtn = h("button", {
+    class: "reader-mode",
+    type: "button",
+    text: "原版",
+    disabled: !file,
+    title: file ? "保留双栏、图表、公式和原始分页" : "请先补传原 PDF",
+    "aria-pressed": "true",
+    "aria-controls": "paperSheet",
+  });
+  const textModeBtn = h("button", {
+    class: "reader-mode",
+    type: "button",
+    text: "文字重排",
+    title: "用于复制和检索的无版面文字",
+    "aria-pressed": String(!file),
+    "aria-controls": "paperSheet",
+  });
+  const zoomOutBtn = h("button", { class: "page-step", type: "button", "aria-label": "缩小原版页面", title: "缩小" }, h("span", { "aria-hidden": "true", text: "−" }));
+  const zoomInBtn = h("button", { class: "page-step", type: "button", "aria-label": "放大原版页面", title: "放大" }, h("span", { "aria-hidden": "true", text: "+" }));
+  const zoomLabel = h("span", { class: "reader-zoom-label", id: "readerZoomLabel", text: "100%", "aria-live": "polite" });
+  const fitBtn = h("button", { class: "btn btn-small", type: "button", text: "适应宽度" });
+  const modeGroup = h("div", { class: "reader-modes", role: "group", "aria-label": "阅读模式" }, originalModeBtn, textModeBtn);
+  const zoomGroup = h("div", { class: "reader-zoom", role: "group", "aria-label": "原版缩放" }, zoomOutBtn, zoomLabel, zoomInBtn, fitBtn);
+  const sheet = h("article", { class: "paper-sheet", id: "paperSheet", tabindex: "0", "aria-label": "当前页正文" });
+  const citeNotice = h("span", { class: "cite-notice", id: "citeNotice", hidden: true, text: "已定位引文" });
+  const originalBtn = file ? h("button", { class: "btn btn-small", type: "button", text: "查看原版", title: "在专注弹层中查看" }) : null;
+  originalBtn?.addEventListener("click", () => openPdfViewer(paper, file, currentPage, currentQuote, originalBtn));
+  const ocrPanel = renderPaperOcrPanel(paper, file);
+
+  const heading = paper.title && !samePaperTitle(paper.title, projectName)
+    ? h("h2", { class: "paper-title", id: "paperStudyTitle", text: paper.title })
+    : h("h2", { class: "sr-only", id: "paperStudyTitle", text: "项目文献" });
+
+  const reader = h("section", showHead ? { class: "reader", "aria-labelledby": "paperStudyTitle" } : { class: "reader", "aria-label": "论文正文" },
+    showHead
+      ? h("header", { class: "reader-head" },
+        h("p", { class: "eyebrow", text: "项目文献" }),
+        heading,
+        h("p", { class: "paper-meta", text: `${paper.filename} · ${readable}/${total} 页有可提取文字` }),
+      )
+      : null,
+    ocrPanel,
+    h("div", { class: "reader-bar" },
+      modeGroup,
+      h("div", { class: "page-nav" },
+        prevBtn,
+        h("span", { class: "page-indicator" }, pageNow, h("span", { class: "page-total", text: ` / ${total}` })),
+        nextBtn,
       ),
-      pageText,
+      h("label", { class: "page-jump", for: "paperPage", text: "跳至" }),
+      pagePicker,
+      zoomGroup,
+      pageSize,
+      originalBtn,
+      citeNotice,
     ),
-    candidates,
+    sheet,
   );
-  const showPage = () => {
-    currentPage = Number(pagePicker.value);
-    const index = currentPage - 1;
-    const source = paperPageSource(paper, index);
-    const text = paper.pages[index] || "";
-    if (text.trim() && (source === "text" || source === "ocr")) {
-      pageText.textContent = text;
-    } else if (source === "failed") {
-      pageText.textContent = `这一页 OCR 失败：${paper.pageErrors?.[index] || "未取得可用文字"}。可在上方单页重试。`;
-    } else if (source === "pending") {
-      pageText.textContent = "这一页没有可用的文字层，尚未 OCR。可在上方识别本页或全部待识别页。";
-    } else {
-      pageText.textContent = "这一页没有可提取的文字层，可能是扫描页或纯图页。";
-    }
-    pageText.scrollTop = 0;
+
+  let currentPage = startPage;
+
+  const updateReaderControls = () => {
+    const original = readerMode === "original" && Boolean(file);
+    originalModeBtn.classList.toggle("is-active", original);
+    textModeBtn.classList.toggle("is-active", !original);
+    originalModeBtn.setAttribute("aria-pressed", String(original));
+    textModeBtn.setAttribute("aria-pressed", String(!original));
+    zoomOutBtn.disabled = !original || readerZoom <= 0.5;
+    zoomInBtn.disabled = !original || readerZoom >= 3;
+    fitBtn.disabled = !original;
+    zoomLabel.textContent = `${Math.round(readerZoom * 100)}%`;
   };
-  pagePicker.value = String(currentPage);
-  pagePicker.addEventListener("change", showPage);
-  showPage();
+
+  const renderPage = (pageNumber, quote) => {
+    viewerSeq += 1;
+    clear(sheet);
+    sheet.classList.add("is-text");
+    sheet.classList.remove("is-original");
+    sheet.dataset.readerMode = "text";
+    sheet.setAttribute("aria-label", "当前页文字重排");
+    const text = paper.pages[pageNumber - 1] ?? "";
+    if (!text.trim()) {
+      const source = paperPageSource(paper, pageNumber - 1);
+      const error = paper.pageErrors?.[pageNumber - 1] || "";
+      const message = source === "failed"
+        ? `这一页 OCR 失败：${error || "未取得可用文字"}。可在上方单页重试。`
+        : source === "pending"
+          ? "这一页没有可用的文字层，尚未 OCR。可在上方识别本页或全部待识别页。"
+          : source === "ocr"
+            ? "这一页 OCR 已完成，但没有识别到文字；可在上方单页重试。"
+            : "这一页没有可提取的文字层，可能是扫描页或纯图页。";
+      sheet.append(h("p", { class: "sheet-empty", text: message }));
+      return null;
+    }
+    let marked = null;
+    for (const block of paragraphizePage(text, { firstPage: pageNumber === 1 })) {
+      const node = block.kind === "title"
+        ? h("h2", { class: "sheet-title" })
+        : block.kind === "heading"
+          ? h("h3", { class: "sheet-h" })
+          : h("p", { class: block.kind === "meta" ? "sheet-meta" : "sheet-p" });
+      if (fillWithQuote(node, block.text, quote) && node.querySelector("mark")) marked = node;
+      sheet.append(node);
+    }
+    return marked;
+  };
+
+  const redrawForWidth = (width) => {
+    if (readerMode !== "original" || !file) return;
+    if (Math.abs(width - (pendingWidth ?? observedWidth)) < 1) return;
+    pendingWidth = width;
+    if (document.body.classList.contains("sidebar-resizing")) {
+      const canvas = sheet.querySelector(".reader-pdf-canvas");
+      const pageHost = sheet.querySelector(".reader-pdf-page");
+      if (!canvas || !pageHost || !renderedPageWidth || !renderedPageHeight || !observedWidth) return;
+      const previewWidth = renderedPageWidth * (width / observedWidth);
+      const previewHeight = renderedPageHeight * (width / observedWidth);
+      canvas.style.width = `${previewWidth}px`;
+      canvas.style.height = `${previewHeight}px`;
+      pageHost.style.width = `${previewWidth}px`;
+      pageHost.style.height = `${previewHeight}px`;
+      return;
+    }
+    if (resizeFrame) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      const nextWidth = pendingWidth;
+      if (nextWidth === null || readerMode !== "original" || document.body.classList.contains("sidebar-resizing")) return;
+      pendingWidth = null;
+      if (Math.abs(nextWidth - observedWidth) < 1) return;
+      void drawOriginal(currentPage, currentQuote);
+    });
+  };
+
+  const flushSidebarResize = () => {
+    pendingWidth = null;
+    redrawForWidth(sheet.clientWidth);
+  };
+
+  const drawOriginal = async (pageNumber, quote) => {
+    const seq = ++viewerSeq;
+    if (resizeFrame) {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = 0;
+    }
+    pendingWidth = null;
+    let view = sheet.dataset.readerMode === "original" ? {
+      status: sheet.querySelector(".original-reader-status"),
+      stage: sheet.querySelector(".pdf-stage--embedded"),
+      pageHost: sheet.querySelector(".reader-pdf-page"),
+      canvas: sheet.querySelector(".reader-pdf-canvas"),
+      highlights: sheet.querySelector(".reader-pdf-highlights"),
+      quoteBox: sheet.querySelector(".pdf-quote--embedded"),
+    } : null;
+    if (!view || !Object.values(view).every(Boolean)) {
+      clear(sheet);
+      sheet.classList.add("is-original");
+      sheet.classList.remove("is-text");
+      sheet.dataset.readerMode = "original";
+      sheet.setAttribute("aria-label", "当前页原版 PDF");
+      const status = h("p", { class: "original-reader-status", role: "status", text: "正在打开原版页面…" });
+      const stage = h("div", { class: "pdf-stage pdf-stage--embedded", "aria-label": "原版 PDF 页面" });
+      const pageHost = h("div", { class: "pdf-page reader-pdf-page" });
+      const canvas = h("canvas", { class: "reader-pdf-canvas", "aria-label": `原文第 ${pageNumber} 页` });
+      const highlights = h("div", { class: "pdf-highlights reader-pdf-highlights", "aria-hidden": "true" });
+      const quoteBox = h("blockquote", { class: "pdf-quote pdf-quote--embedded", hidden: !quote, text: quote ?? "" });
+      pageHost.append(canvas, highlights);
+      stage.append(pageHost);
+      sheet.append(status, stage, quoteBox);
+      view = { status, stage, pageHost, canvas, highlights, quoteBox };
+    }
+    const { status, stage, pageHost, canvas, highlights, quoteBox } = view;
+    sheet.querySelector(".original-reader-error")?.remove();
+    canvas.setAttribute("aria-label", `原文第 ${pageNumber} 页`);
+    quoteBox.hidden = !quote;
+    quoteBox.textContent = quote ?? "";
+    status.textContent = `第 ${pageNumber} / ${total} 页 · 正在打开…`;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (seq !== viewerSeq || !sheet.isConnected) return;
+      const pdf = await loadPdfDocument(file);
+      if (seq !== viewerSeq || !sheet.isConnected) return;
+      const page = await pdf.getPage(pageNumber);
+      if (seq !== viewerSeq || !sheet.isConnected) return;
+      const base = page.getViewport({ scale: 1 });
+      const stageStyle = getComputedStyle(stage);
+      const horizontalPadding = parseFloat(stageStyle.paddingLeft) + parseFloat(stageStyle.paddingRight);
+      const availableWidth = Math.max(1, stage.clientWidth - horizontalPadding);
+      const scale = (availableWidth / base.width) * readerZoom;
+      observedWidth = sheet.clientWidth;
+      status.textContent = `第 ${pageNumber} / ${total} 页 · 正在渲染…`;
+      const result = await renderPdfPageCanvas({
+        page,
+        pageNumber,
+        paper,
+        quote,
+        canvas,
+        pageHost,
+        highlights,
+        scale,
+        isCurrent: () => seq === viewerSeq && sheet.isConnected,
+      });
+      if (!result) return;
+      renderedPageWidth = parseFloat(canvas.style.width);
+      renderedPageHeight = parseFloat(canvas.style.height);
+      status.textContent = `第 ${pageNumber} / ${total} 页${result.located ? ` · ${result.located.reason}` : " · 原版页面"}`;
+      if (!resizeObserver) {
+        resizeObserver = new ResizeObserver((entries) => redrawForWidth(entries[0].contentRect.width));
+        resizeObserver.observe(sheet);
+        resizeHandler = () => redrawForWidth(sheet.clientWidth);
+        window.addEventListener("resize", resizeHandler);
+        window.addEventListener("agentflow:sidebar-resize-end", flushSidebarResize);
+      }
+      redrawForWidth(sheet.clientWidth);
+    } catch (error) {
+      if (seq !== viewerSeq) return;
+      status.textContent = `原版页面打开失败：${error.message || String(error)}`;
+      const retry = h("button", { class: "btn", type: "button", text: "重试原版" });
+      retry.addEventListener("click", () => commitPage(currentPage, { quote: currentQuote }));
+      const fallback = h("button", { class: "btn", type: "button", text: "改用文字重排" });
+      fallback.addEventListener("click", () => setReaderMode("text"));
+      sheet.querySelector(".original-reader-error")?.remove();
+      quoteBox.after(h("div", { class: "original-reader-error" }, retry, fallback));
+    }
+  };
+
+  const setReaderMode = (mode) => {
+    if (mode === "original" && !file) return;
+    readerMode = mode;
+    updateReaderControls();
+    commitPage(currentPage, { quote: currentQuote });
+  };
+
+  const commitPage = (next, { quote = null } = {}) => {
+    currentPage = Math.min(total, Math.max(1, Number(next) || 1));
+    currentQuote = quote;
+    pagePicker.value = String(currentPage);
+    pageNow.textContent = String(currentPage);
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= total;
+    const text = paper.pages[currentPage - 1] ?? "";
+    pageSize.textContent = text.trim() ? `约 ${countPaperChars(text).toLocaleString("zh-CN")} 字` : "无可读文字";
+    citeNotice.hidden = !currentQuote;
+    if (readerMode === "original" && file) {
+      void drawOriginal(currentPage, currentQuote);
+    } else {
+      const marked = renderPage(currentPage, currentQuote);
+      if (marked) {
+        requestAnimationFrame(() => {
+          if (!sheet.isConnected || readerMode !== "text") return;
+          marked.scrollIntoView({ block: "center" });
+          marked.classList.add("is-cited");
+        });
+      }
+    }
+    history.replaceState(null, "", projectPaperHash(paper.projectId, paper, currentPage, currentQuote ? citeRef : null));
+  };
+
+  originalModeBtn.addEventListener("click", () => setReaderMode("original"));
+  textModeBtn.addEventListener("click", () => setReaderMode("text"));
+  zoomOutBtn.addEventListener("click", () => {
+    readerZoom = Math.max(0.5, readerZoom - 0.25);
+    updateReaderControls();
+    commitPage(currentPage, { quote: currentQuote });
+  });
+  zoomInBtn.addEventListener("click", () => {
+    readerZoom = Math.min(3, readerZoom + 0.25);
+    updateReaderControls();
+    commitPage(currentPage, { quote: currentQuote });
+  });
+  fitBtn.addEventListener("click", () => {
+    readerZoom = 1;
+    updateReaderControls();
+    commitPage(currentPage, { quote: currentQuote });
+  });
+  prevBtn.addEventListener("click", () => commitPage(currentPage - 1));
+  nextBtn.addEventListener("click", () => commitPage(currentPage + 1));
+  pagePicker.addEventListener("change", () => commitPage(Number(pagePicker.value)));
+  sheet.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (event.altKey || event.metaKey || event.ctrlKey) return;
+    event.preventDefault();
+    commitPage(currentPage + (event.key === "ArrowRight" ? 1 : -1));
+  });
+  activePaperReaderCleanup = () => {
+    viewerSeq += 1;
+    if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    resizeFrame = 0;
+    pendingWidth = null;
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    if (resizeHandler) window.removeEventListener("resize", resizeHandler);
+    resizeHandler = null;
+    window.removeEventListener("agentflow:sidebar-resize-end", flushSidebarResize);
+  };
+  updateReaderControls();
+  commitPage(startPage, { quote });
+
+  const rail = h("aside", { class: "evidence-rail", "aria-labelledby": "paperCandidatesTitle" },
+    h("div", { class: "rail-head" },
+      h("div", {},
+        h("p", { class: "eyebrow", text: "模型提炼" }),
+        h("h2", { id: "paperCandidatesTitle", text: "候选研究问题" }),
+      ),
+      generation?.candidates.length ? h("span", { class: "rail-count", text: String(generation.candidates.length) }) : null,
+    ),
+  );
 
   if (!generation?.candidates.length) {
-    const hasText = paperHasReadableText(paper);
-    const message = job?.text ?? (generation ? "模型未找到有可核对证据的研究问题，可重新生成。" : hasText ? "可将论文文字发送给模型服务，生成带出处的问题草稿。" : "暂无可用于生成问题的文字，请先完成 OCR。");
-    const status = h("p", { id: "paperGenerationStatus", role: "status", class: job && !job.running ? "field-error" : "aux", text: message });
-    const generate = h("button", { class: "btn btn-primary", type: "button", disabled: job?.running || !hasText, text: job || generation ? "重新生成" : "生成研究问题" });
+    const message = job?.text ?? (generation ? "模型没有找到有可核对证据的问题，可重新生成。" : "把论文文字分批交给模型，生成带页码出处的候选研究问题。");
+    const status = h("p", { id: "paperGenerationStatus", role: "status", class: job && !job.running ? "field-error" : "rail-note", text: message });
+    const generate = h("button", {
+      class: "btn btn-primary",
+      type: "button",
+      disabled: job?.running,
+      text: job?.running ? "生成中…" : generation ? "重新生成" : "生成研究问题",
+    });
     generate.addEventListener("click", () => {
       generate.disabled = true;
       status.textContent = "正在准备论文文字…";
       void startPaperGeneration(paper.projectId, paper);
     });
-    candidates.append(status, generate);
+    rail.append(h("div", { class: "rail-empty" },
+      h("p", { class: "rail-lede", text: "模型按页阅读全文，提出可检验、可核对的假设；核对页码与原文后再决定是否创建。" }),
+      status,
+      generate,
+    ));
   } else {
-    candidates.append(h("p", { class: "aux", text: `模型 ${generation.model} · 核对页码和原文后，可编辑并确认问题。` }));
-    for (const candidate of generation.candidates) {
-      const card = h("article", { class: "paper-candidate" }, h("h3", { text: candidate.question }), renderPaperEvidence(paper, candidate, file));
+    rail.append(h("p", { class: "rail-note", text: `模型 ${generation.model} · 核对页码与原文后确认` }));
+    generation.candidates.forEach((candidate, index) => {
+      const card = h("article", { class: "candidate" },
+        h("div", { class: "candidate-head" },
+          h("span", { class: "candidate-no", text: String(index + 1).padStart(2, "0") }),
+          h("h3", { class: "candidate-q", text: candidate.question }),
+        ),
+        ...renderPaperEvidence(paper, candidate, index),
+      );
       if (candidate.questionId) {
-        card.append(h("a", { class: "name-link", href: `#/question/${candidate.questionId}`, text: "打开已确认的问题" }));
+        card.append(h("a", { class: "candidate-open", href: `#/question/${candidate.questionId}`, text: "打开已确认的问题 →" }));
       } else {
-        const input = h("textarea", { maxlength: 300, rows: 2, id: `paper-question-${candidate.id}`, required: true });
+        const input = h("textarea", { maxlength: 300, rows: 3, id: `paper-question-${candidate.id}`, required: true });
         input.value = candidate.question;
-        const confirm = h("button", { class: "btn btn-primary", type: "submit", text: "确认并创建问题" });
+        const confirm = h("button", { class: "btn btn-primary", type: "submit", text: "确认并创建" });
         const status = h("p", { class: "field-error", role: "status" });
-        const form = h("form", { class: "field" }, h("label", { for: input.id, text: "研究问题（可修改）" }), input,
+        const form = h("form", { class: "field candidate-form" },
+          h("label", { for: input.id, text: "研究问题（可修改）" }), input,
           h("div", { class: "empty-actions" }, confirm), status);
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
@@ -1844,12 +2583,43 @@ function renderPaperStudy(paper, initialPage, file = null) {
             confirm.disabled = false;
           }
         });
-        card.append(form);
+        card.append(h("details", { class: "candidate-confirm" },
+          h("summary", { text: "编辑并确认问题" }),
+          form,
+        ));
       }
-      candidates.append(card);
-    }
+      rail.append(card);
+    });
   }
-  return body;
+
+  return h("div", { class: "reader-layout" }, reader, rail);
+}
+
+function renderPaperLibrary(project, papers, selectedSha256) {
+  const addButton = h("button", { class: "btn btn-primary", type: "button", id: "addPaperPdf", text: "＋ 添加 PDF" });
+  const input = bindPdfImport(addButton, { projectId: project.projectId, meta: null });
+  const visiblePapers = papers.filter((paper) => paper.sha256 !== selectedSha256);
+  const tabs = h("nav", { class: "paper-tabs", "aria-label": "项目文献" },
+    ...visiblePapers.map((paper) => h("a", {
+      class: `paper-tab${paper.sha256 === selectedSha256 ? " is-active" : ""}`,
+      href: projectPaperHash(project.projectId, paper),
+      "aria-current": paper.sha256 === selectedSha256 ? "page" : "false",
+      dataset: { paperSha256: paper.sha256 },
+    },
+      h("strong", { text: paper.title }),
+      h("span", { text: `${paper.filename} · ${paper.pages.length} 页` }),
+      h("span", { class: "paper-tab-state", text: paper.generation?.candidates.length ? `${paper.generation.candidates.length} 个候选问题` : "尚未生成候选问题" }),
+    )),
+  );
+  return h("section", { class: "paper-library", "aria-labelledby": "paperLibraryTitle" },
+    h("div", { class: "paper-library-head" },
+      h("p", { class: "eyebrow", text: "文献库" }),
+      h("h2", { id: "paperLibraryTitle", text: `项目文献（${papers.length}）` }),
+    ),
+    papers.length ? tabs : h("p", { class: "paper-library-empty", text: "还没有入库 PDF。添加论文后，可逐页阅读并把原文关联到研究问题。" }),
+    addButton,
+    input,
+  );
 }
 
 function renderLegacyPaper(projectId, meta) {
@@ -1867,14 +2637,27 @@ function renderLegacyPaper(projectId, meta) {
 
 let projectRenderSeq = 0;
 
-async function renderProject(projectId, page) {
+async function renderProject(projectId, page, cite, paperSha256 = null) {
   const seq = ++projectRenderSeq;
   const project = await data.getProject(ACTOR, projectId);
   if (!project) throw new Error(`项目不存在: ${projectId}`);
-  const paper = await data.getPaperStudy(ACTOR, projectId);
+  const papers = await data.listPaperStudies(ACTOR, projectId);
+  let paper = papers.find((item) => item.sha256 === paperSha256) ?? papers[0] ?? null;
+  if (paperSha256 && !paper) throw new Error("项目文献不存在");
+  let initialQuote = null;
+  if (paper && cite?.startsWith("e:")) {
+    const [, questionId, evidenceId] = cite.split(":");
+    const evidence = (await data.listPaperEvidence(ACTOR, questionId)).find((item) => item.evidenceId === evidenceId);
+    if (!evidence || evidence.projectId !== projectId) throw new Error("研究证据不存在");
+    paper = papers.find((item) => item.sha256 === evidence.paperSha256) ?? null;
+    if (!paper) throw new Error("研究证据对应的文献不存在");
+    page = evidence.page;
+    initialQuote = evidence.quote;
+  }
   const paperFile = paper ? await data.getPaperFile(ACTOR, projectId, paper.sha256) : null;
-  const legacy = paper ? null : readLegacyPaperImport(projectId);
-  if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId || parseRoute().page !== page) return;
+  const legacy = papers.length ? null : readLegacyPaperImport(projectId);
+  if (seq !== projectRenderSeq || parseRoute().view !== "project" || parseRoute().projectId !== projectId
+    || parseRoute().page !== page || (parseRoute().paper ?? null) !== (paperSha256 ?? null)) return;
 
   const titleInput = h("input", {
     type: "text",
@@ -1887,25 +2670,34 @@ async function renderProject(projectId, page) {
     title: "点击修改项目名；Enter 保存，Esc 取消",
   });
   const titleError = h("span", { class: "field-error project-title-error", id: "projectTitleError", role: "alert", hidden: true });
-  const title = h("h1", {},
+  const title = h("h1", { class: paper ? "project-paper-title" : "", id: "projectTitle" },
     titleInput,
     paper ? h("span", { class: "project-paper-title-meta", text: `${paper.title} · ${paper.filename} · ${paper.pages.length} 页` }) : null,
     titleError,
   );
-  const head = h("div", { class: "page-head" },
-    h("div", { class: "field", style: "gap:6px" },
+  const head = h("div", { class: "project-head" },
+    h("div", { class: "project-head-main" },
+      h("p", { class: "eyebrow", text: "研究项目" }),
       title,
     ),
-    h("div", { class: "empty-actions" },
+    h("div", { class: "head-actions" },
       h("button", { class: "btn btn-primary", type: "button", id: "newQuestionBtn", text: "新建研究问题" }),
     ),
   );
 
   const listHost = h("div", { id: "questionListHost" });
   main.append(head, listHost);
-  if (paper) listHost.before(renderPaperStudy(paper, page, paperFile), h("h2", { text: "已创建的研究问题" }));
-  else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
-  if (page > 0 && paper) document.getElementById("paperPage").focus();
+  listHost.before(renderPaperLibrary(project, papers, paper?.sha256));
+  if (paper) {
+    listHost.before(
+      renderPaperStudy(paper, page, cite, project.name, initialQuote, { showHead: false, file: paperFile }),
+      h("div", { class: "section-head" },
+        h("h2", { class: "section-title", text: "研究问题" }),
+        h("span", { class: "section-count", id: "questionCount" }),
+      ),
+    );
+  } else if (legacy) listHost.before(renderLegacyPaper(projectId, legacy));
+  if (paper && page > 0) document.getElementById("paperSheet")?.focus({ preventScroll: true });
 
   let currentProjectName = project.name;
   let savingProjectName = false;
@@ -1980,9 +2772,11 @@ async function renderProject(projectId, page) {
     const questions = await data.listQuestions(ACTOR, targetId);
     if (!host.isConnected) return;
     clear(host);
+    const countNode = document.getElementById("questionCount");
+    if (countNode) countNode.textContent = questions.length > 0 ? `${questions.length} 个` : "";
     if (questions.length === 0) {
       if (paper) {
-        host.append(h("p", { class: "aux", text: "确认后的研究问题将显示在这里。" }));
+        host.append(h("p", { class: "list-empty", text: "在右侧候选问题里核对原文，确认后会出现在这里。" }));
         return;
       }
       host.append(
@@ -2004,7 +2798,7 @@ async function renderProject(projectId, page) {
       ),
       h("thead", {},
         h("tr", {},
-          h("th", { scope: "col", text: paper ? "研究问题" : "原句" }),
+          h("th", { scope: "col", text: paper ? "问题" : "原句" }),
           h("th", { scope: "col", text: "当前状态" }),
           h("th", { scope: "col", text: "最后版本" }),
         ),
@@ -2608,87 +3402,6 @@ async function renderNewQuestion(projectId) {
   if (entry.dataText) runPreview();
 }
 
-// ---------- 视图 4：问题详情（卡 10） ----------
-
-const qView = {
-  questionId: null,
-  revisionId: null,
-  selectedKey: null,
-  highlightKeys: [],
-  selectedEvidenceId: null,
-  statusText: "",
-  statusIsError: false,
-  autoSelectNewSuggested: null,
-  projectIdForDrawer: null,
-  drawer: null,
-  parseDone: false,
-  updateSteps: null,
-};
-
-const STEP_LABELS = [
-  { kind: "parse", label: "解析主张" },
-  { kind: "snapshot", label: "核对配置" },
-  { kind: "rules", label: "查找对照" },
-  { kind: "model", label: "模型分析" },
-];
-const STEP_TEXT = { pending: "待运行", running: "运行中", done: "完成", failed: "失败", unavailable: "未接通" };
-const STEP_GLYPH = { pending: "○", running: "◐", done: "●", failed: "✕", unavailable: "○" };
-
-function nodeStepState(node, events, parseDone) {
-  if (node === "parse") return parseDone ? "done" : "pending";
-  const evs = events.filter((e) => e.node === node);
-  if (evs.some((e) => e.status === "failed")) return "failed";
-  if (evs.some((e) => e.status === "completed")) return "done";
-  if (evs.some((e) => e.status === "started")) return "running";
-  return "pending";
-}
-
-/** 模型节点失败事件的如实区分：服务未配置=未接通（中性），其余=失败（红）。 */
-function modelStepState(events) {
-  const failed = [...events].reverse().find((e) => e.node === "model" && e.status === "failed");
-  return failed && failed.summary.includes("模型服务不可用") ? "unavailable" : "failed";
-}
-
-/** 立即渲染真实等待/错误状态（不等分析结束才显示）。 */
-function showStatus(text, isError = false) {
-  qView.statusText = text;
-  qView.statusIsError = isError;
-  let node = document.getElementById("qStatus");
-  if (!node) {
-    node = h("div", { id: "qStatus", role: "status" });
-    const stepsNode = document.getElementById("steps");
-    if (stepsNode && stepsNode.isConnected) stepsNode.after(node);
-    else main.append(node);
-  }
-  node.className = isError ? "notice notice-error" : "notice";
-  node.textContent = text;
-}
-
-/** 异步操作期间按 job 事件刷新步骤行（运行中/失败等来自真实事件）。 */
-function watchStepsWhile(questionId, promise) {
-  const timer = setInterval(() => {
-    wf.listJobs(ACTOR, questionId)
-      .then(async (jobs) => {
-        const latest = jobs.length > 0 ? jobs[jobs.length - 1] : null;
-        const events = latest ? (await wf.getJob(ACTOR, latest.jobId)).events : [];
-        if (qView.updateSteps) qView.updateSteps(events);
-      })
-      .catch((error) => {
-        clearInterval(timer);
-        showStatus(`节点状态刷新失败：${error && error.message ? error.message : String(error)}`, true);
-      });
-  }, 250);
-  return promise.finally(() => clearInterval(timer));
-}
-
-function augLabel(augmentation) {
-  return augmentation === "off" ? "关" : "开";
-}
-
-function cellKeyOf(lr, augmentation) {
-  return `${lr}|${augmentation}`;
-}
-
 // ---------- 视图 4：问题详情与研究记录（卡 23） ----------
 
 const RESEARCH_ITEM_STATUS = {
@@ -2706,28 +3419,12 @@ function researchBadge(text, kind) {
   return h("span", { class: `research-badge research-badge--${kind}`, text });
 }
 
-function researchSourceLink(question, source, text, className = "") {
-  const link = h("a", { class: className, href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text });
-  link.addEventListener("click", async (event) => {
-    event.preventDefault();
-    const paper = await data.getPaperStudy(ACTOR, question.projectId);
-    const file = paper?.sha256 === source.paperSha256 ? await data.getPaperFile(ACTOR, question.projectId, paper.sha256) : null;
-    if (!paper || paper.sha256 !== source.paperSha256 || !file) {
-      toast("请先补传原 PDF，才能查看原版页面", "bad");
-      location.hash = `#/project/${question.projectId}/${source.page}`;
-      return;
-    }
-    await openPdfViewer(paper, file, source.page, source.quote, link);
-  });
-  return link;
-}
-
 function renderResearchSources(question, sources, sourceIds) {
   const selected = sourceIds.map((sourceId) => sources.find((source) => source.sourceId === sourceId)).filter(Boolean);
   if (selected.length === 0) return null;
   return h("ul", { class: "research-sources" },
     selected.map((source) => h("li", {},
-      researchSourceLink(question, source, `${source.title} · PDF 第 ${source.page} 页`),
+      h("a", { href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `${source.title} · PDF 第 ${source.page} 页` }),
       h("blockquote", { text: source.quote }),
     )),
   );
@@ -3013,7 +3710,7 @@ async function renderResearchWorkspace(question, research) {
       for (const sourceId of item.sourceIds) {
         const source = research.sources.find((entry) => entry.sourceId === sourceId);
         if (source) {
-          trace.append(researchSourceLink(question, source, `原文第 ${source.page} 页`, "btn"));
+          trace.append(h("a", { class: "btn", href: `#/project/${question.projectId}/paper/${source.paperSha256}/${source.page}`, text: `原文第 ${source.page} 页` }));
         }
       }
       resultList.append(h("li", {
@@ -3058,40 +3755,406 @@ async function renderResearchWorkspace(question, research) {
   return panel;
 }
 
+const qView = {
+  questionId: null,
+  revisionId: null,
+  selectedKey: null,
+  highlightKeys: [],
+  selectedEvidenceId: null,
+  statusText: "",
+  statusIsError: false,
+  autoSelectNewSuggested: null,
+  projectIdForDrawer: null,
+  drawer: null,
+  parseDone: false,
+  updateSteps: null,
+};
+
+const STEP_LABELS = [
+  { kind: "parse", label: "解析主张" },
+  { kind: "snapshot", label: "核对配置" },
+  { kind: "rules", label: "查找对照" },
+  { kind: "model", label: "模型分析" },
+];
+const STEP_TEXT = { pending: "待运行", running: "运行中", done: "完成", failed: "失败", unavailable: "未接通" };
+const STEP_GLYPH = { pending: "○", running: "◐", done: "●", failed: "✕", unavailable: "○" };
+
+function nodeStepState(node, events, parseDone) {
+  if (node === "parse") return parseDone ? "done" : "pending";
+  const evs = events.filter((e) => e.node === node);
+  if (evs.some((e) => e.status === "failed")) return "failed";
+  if (evs.some((e) => e.status === "completed")) return "done";
+  if (evs.some((e) => e.status === "started")) return "running";
+  return "pending";
+}
+
+/** 模型节点失败事件的如实区分：服务未配置=未接通（中性），其余=失败（红）。 */
+function modelStepState(events) {
+  const failed = [...events].reverse().find((e) => e.node === "model" && e.status === "failed");
+  return failed && failed.summary.includes("模型服务不可用") ? "unavailable" : "failed";
+}
+
+/** 立即渲染真实等待/错误状态（不等分析结束才显示）。 */
+function showStatus(text, isError = false) {
+  qView.statusText = text;
+  qView.statusIsError = isError;
+  let node = document.getElementById("qStatus");
+  if (!node) {
+    node = h("div", { id: "qStatus", role: "status" });
+    const stepsNode = document.getElementById("steps");
+    if (stepsNode && stepsNode.isConnected) stepsNode.after(node);
+    else main.append(node);
+  }
+  node.className = isError ? "notice notice-error" : "notice";
+  node.textContent = text;
+}
+
+/** 异步操作期间按 job 事件刷新步骤行（运行中/失败等来自真实事件）。 */
+function watchStepsWhile(questionId, promise) {
+  const timer = setInterval(() => {
+    wf.listJobs(ACTOR, questionId)
+      .then(async (jobs) => {
+        const latest = jobs.length > 0 ? jobs[jobs.length - 1] : null;
+        const events = latest ? (await wf.getJob(ACTOR, latest.jobId)).events : [];
+        if (qView.updateSteps) qView.updateSteps(events);
+      })
+      .catch((error) => {
+        clearInterval(timer);
+        showStatus(`节点状态刷新失败：${error && error.message ? error.message : String(error)}`, true);
+      });
+  }, 250);
+  return promise.finally(() => clearInterval(timer));
+}
+
+function augLabel(augmentation) {
+  return augmentation === "off" ? "关" : "开";
+}
+
+function cellKeyOf(lr, augmentation) {
+  return `${lr}|${augmentation}`;
+}
+
+const PAPER_EVIDENCE_LABELS = {
+  support: "支持证据",
+  counterexample: "反例",
+  condition: "适用条件",
+};
+
+function renderPaperEvidenceCard(question, evidence, paper, refresh) {
+  const status = h("p", { class: "field-error", role: "alert", hidden: true });
+  const edit = h("button", { class: "btn btn-small", type: "button", text: "编辑", "aria-label": `编辑${PAPER_EVIDENCE_LABELS[evidence.kind]}` });
+  edit.addEventListener("click", () => openPaperEvidenceModal({ question, papers: paper ? [paper] : [], evidence, trigger: edit, onSaved: refresh }));
+  const unlink = h("button", { class: "btn btn-small btn-quiet", type: "button", text: "解除关联", dataset: { confirmEvidence: evidence.evidenceId } });
+  const cancel = h("button", { class: "btn btn-small btn-quiet", type: "button", text: "取消", hidden: true });
+  let confirming = false;
+  const reset = () => {
+    confirming = false;
+    unlink.textContent = "解除关联";
+    unlink.classList.remove("btn-danger");
+    cancel.hidden = true;
+  };
+  cancel.addEventListener("click", reset);
+  unlink.addEventListener("click", async () => {
+    if (!confirming) {
+      confirming = true;
+      unlink.textContent = "确认解除关联";
+      unlink.classList.add("btn-danger");
+      cancel.hidden = false;
+      unlink.focus();
+      return;
+    }
+    unlink.disabled = true;
+    cancel.disabled = true;
+    status.hidden = true;
+    try {
+      await data.removePaperEvidence(ACTOR, { questionId: question.questionId, evidenceId: evidence.evidenceId, now: new Date().toISOString() });
+      toast("已解除问题与证据的关联，论文原文仍保留", "ok");
+      await refresh();
+    } catch (error) {
+      status.hidden = false;
+      status.textContent = `解除关联失败：${error.message}`;
+      unlink.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+  const sourceLink = paper ? h("a", { class: "cite-chip", href: projectPaperHash(question.projectId, paper, evidence.page, paperEvidenceRef(question.questionId, evidence.evidenceId)), text: `打开原文 · 第 ${evidence.page} 页` }) : null;
+  if (sourceLink) {
+    sourceLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const file = await data.getPaperFile(ACTOR, question.projectId, paper.sha256);
+      if (!file) {
+        toast("请先补传原 PDF，才能查看原版页面", "bad");
+        location.hash = sourceLink.hash;
+        return;
+      }
+      await openPdfViewer(paper, file, evidence.page, evidence.quote, sourceLink);
+    });
+  }
+  return h("article", {
+    class: `paper-evidence-card paper-evidence-${evidence.kind}`,
+    dataset: { evidenceId: evidence.evidenceId, evidenceKind: evidence.kind, paperSha256: evidence.paperSha256 },
+  },
+    h("div", { class: "paper-evidence-head" },
+      h("span", { class: `research-badge paper-evidence-badge--${evidence.kind}`, text: PAPER_EVIDENCE_LABELS[evidence.kind] }),
+      h("span", { class: "aux", text: `PDF 物理第 ${evidence.page} 页` }),
+    ),
+    h("h4", { class: "paper-evidence-title", text: paper?.title ?? evidence.paperSha256 }),
+    h("p", { class: "paper-evidence-file", text: paper?.filename ?? "项目文献" }),
+    sourceLink,
+    h("blockquote", { class: "paper-evidence-quote", text: evidence.quote }),
+    h("div", { class: "paper-evidence-note" }, h("strong", { text: "研究者说明" }), h("p", { text: evidence.note })),
+    h("div", { class: "paper-evidence-actions" }, edit, unlink, cancel),
+    status,
+  );
+}
+
+function renderQuestionPaperPanel(question, papers, evidence, candidate, candidatePaper, candidateIndex, refresh) {
+  const addPdf = h("button", { class: "btn", type: "button", id: "questionAddPaperPdf", text: "＋ 添加 PDF" });
+  const pdfInput = bindPdfImport(addPdf, { projectId: question.projectId, meta: null, returnQuestionId: question.questionId });
+  const addEvidence = h("button", {
+    class: "btn btn-primary",
+    type: "button",
+    id: "addPaperEvidence",
+    text: "＋ 添加证据",
+    disabled: !papers.length,
+  });
+  addEvidence.addEventListener("click", () => openPaperEvidenceModal({ question, papers, trigger: addEvidence, onSaved: refresh }));
+  const clue = candidate && candidatePaper ? h("div", { class: "paper-clue" },
+    h("div", { class: "paper-clue-head" }, h("h3", { text: "研究线索与文献出处" }), h("span", { class: "aux", text: candidatePaper.title })),
+    ...renderPaperEvidence(candidatePaper, candidate, candidateIndex),
+  ) : null;
+  const columns = Object.entries(PAPER_EVIDENCE_LABELS).map(([kind, label]) => {
+    const items = evidence.filter((item) => item.kind === kind);
+    return h("section", { class: `paper-compare-column paper-compare-${kind}`, dataset: { evidenceKind: kind }, "aria-labelledby": `paperCompare-${kind}` },
+      h("div", { class: "paper-compare-head" },
+        h("h3", { id: `paperCompare-${kind}`, text: label }),
+        h("span", { class: "rail-count", text: String(items.length) }),
+      ),
+      items.length
+        ? h("div", { class: "paper-compare-list" }, ...items.map((item) => renderPaperEvidenceCard(question, item, papers.find((paper) => paper.sha256 === item.paperSha256) ?? null, refresh)))
+        : h("p", { class: "paper-compare-empty", text: "待补充" }),
+    );
+  });
+  return h("section", { class: "panel paper-compare-panel", id: "paperComparePanel", "aria-labelledby": "paperCompareTitle" },
+    h("div", { class: "paper-compare-heading" },
+      h("div", {},
+        h("p", { class: "eyebrow", text: "跨文献阅读" }),
+        h("h2", { id: "paperCompareTitle", text: "论文证据对照" }),
+        h("p", { class: "aux", text: "证据分类由研究者确认；支持、反例与适用条件并列保留，不自动合并结论。" }),
+      ),
+      h("div", { class: "paper-compare-actions" }, addPdf, addEvidence),
+    ),
+    !papers.length ? h("p", { class: "notice", text: "先添加 PDF，再从指定文献的物理页选择连续原文。" }) : null,
+    clue,
+    h("div", { class: "paper-compare-grid" }, ...columns),
+    pdfInput,
+  );
+}
+
+let paperEvidenceModalState = null;
+
+function openPaperEvidenceModal({ question, papers, evidence = null, trigger, onSaved }) {
+  closePaperEvidenceModal(false);
+  const overlay = h("div", { class: "modal-overlay", id: "paperEvidenceModalOverlay" });
+  const modal = h("div", {
+    class: "modal modal--wide modal--paper-evidence",
+    id: "paperEvidenceModal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "paperEvidenceModalTitle",
+    tabindex: "-1",
+  });
+  const error = h("p", { class: "field-error", role: "alert", hidden: true });
+  const verifyStatus = h("p", { class: "aux", role: "status", id: "paperEvidenceVerifyStatus" });
+  const kind = h("select", { id: "paperEvidenceKind", required: true, "aria-label": "证据分类" },
+    ...Object.entries(PAPER_EVIDENCE_LABELS).map(([value, label]) => h("option", { value, text: label })),
+  );
+  kind.value = evidence?.kind ?? "support";
+  const note = h("textarea", { id: "paperEvidenceNote", rows: 4, maxlength: 500, required: true, "aria-label": "证据说明" });
+  note.value = evidence?.note ?? "";
+  const save = h("button", { class: "btn btn-primary", type: "submit", id: "paperEvidenceSave", text: evidence ? "保存修改" : "保存证据" });
+  const close = h("button", { class: "btn", type: "button", id: "paperEvidenceClose", text: "取消" });
+  const form = h("form", { class: "research-form" },
+    h("h2", { id: "paperEvidenceModalTitle", text: evidence ? "编辑研究证据" : "添加研究证据" }),
+    h("div", { class: "field" }, h("label", { for: kind.id, text: "证据分类（由研究者确认）" }), kind),
+  );
+
+  if (evidence) {
+    const paper = papers.find((item) => item.sha256 === evidence.paperSha256);
+    form.append(h("section", { class: "paper-evidence-source" },
+      h("h3", { text: paper?.title ?? "项目文献" }),
+      h("p", { class: "aux", text: `${paper?.filename ?? ""} · PDF 物理第 ${evidence.page} 页` }),
+      h("blockquote", { class: "paper-evidence-quote", text: evidence.quote }),
+      h("p", { class: "aux", text: "原文、文献与页码不可修改；只调整分类和说明。" }),
+    ));
+  } else {
+    const paperSelect = h("select", { id: "paperEvidencePaper", required: true, "aria-label": "来源文献" },
+      ...papers.map((paper) => h("option", { value: paper.sha256, text: `${paper.title} · ${paper.filename}` })),
+    );
+    const page = h("input", { type: "number", id: "paperEvidencePage", min: 1, step: 1, required: true, value: "1", "aria-label": "PDF 物理页码" });
+    const preview = h("div", { class: "paper-evidence-preview", id: "paperEvidencePreview", tabindex: "0", role: "region", "aria-label": "指定页原文" });
+    const quote = h("textarea", { id: "paperEvidenceQuote", rows: 5, maxlength: 400, required: true, "aria-label": "连续原文" });
+    const load = h("button", { class: "btn btn-small", type: "button", id: "paperEvidenceLoadPage", text: "载入该页" });
+    const useSelection = h("button", {
+      class: "btn btn-small",
+      type: "button",
+      id: "paperEvidenceUseSelection",
+      text: "使用所选原文",
+      mousedown: (event) => event.preventDefault(),
+    });
+    const verify = h("button", { class: "btn btn-small", type: "button", id: "paperEvidenceVerify", text: "回查原文" });
+    const selectedPaper = () => papers.find((item) => item.sha256 === paperSelect.value);
+    const loadPage = () => {
+      const paper = selectedPaper();
+      const number = Number(page.value);
+      verifyStatus.textContent = "";
+      verifyStatus.classList.remove("field-error");
+      if (!paper || !Number.isSafeInteger(number) || number < 1 || number > paper.pages.length) {
+        preview.textContent = "请输入该文献的有效物理页码。";
+        page.setAttribute("aria-invalid", "true");
+        return;
+      }
+      page.removeAttribute("aria-invalid");
+      page.max = String(paper.pages.length);
+      preview.textContent = paper.pages[number - 1] || "这一页没有可提取的文字层。";
+    };
+    paperSelect.addEventListener("change", () => {
+      page.value = "1";
+      quote.value = "";
+      loadPage();
+    });
+    page.addEventListener("change", loadPage);
+    load.addEventListener("click", loadPage);
+    useSelection.addEventListener("click", () => {
+      const selection = window.getSelection();
+      const selected = selection?.toString().trim() ?? "";
+      if (!selection || !selection.anchorNode || !preview.contains(selection.anchorNode) || !selected) {
+        verifyStatus.textContent = "请先在原文预览中连续选取一段文字。";
+        verifyStatus.classList.add("field-error");
+        return;
+      }
+      quote.value = selected.slice(0, 400);
+      verifyStatus.textContent = "已填入所选原文，保存前仍需通过回查。";
+      verifyStatus.classList.remove("field-error");
+      quote.focus();
+    });
+    verify.addEventListener("click", () => {
+      try {
+        const citation = verifyPaperQuote(selectedPaper(), Number(page.value), quote.value);
+        quote.value = citation.quote;
+        verifyStatus.textContent = `回查通过：已定位到第 ${citation.page} 页的连续原文。`;
+        verifyStatus.classList.remove("field-error");
+      } catch (verifyError) {
+        verifyStatus.textContent = `回查失败：${verifyError.message}`;
+        verifyStatus.classList.add("field-error");
+      }
+    });
+    form.append(
+      h("div", { class: "field" }, h("label", { for: paperSelect.id, text: "来源文献" }), paperSelect),
+      h("div", { class: "paper-evidence-page-row" },
+        h("div", { class: "field" }, h("label", { for: page.id, text: "PDF 物理页码" }), page),
+        load,
+      ),
+      h("div", { class: "field" },
+        h("label", { text: "该页原文（可在预览中选取）" }),
+        preview,
+        h("div", { class: "paper-evidence-source-actions" }, useSelection, verify),
+      ),
+      h("div", { class: "field" },
+        h("label", { for: quote.id, text: "连续原文（10–400 字符）" }),
+        quote,
+        verifyStatus,
+      ),
+    );
+    loadPage();
+  }
+
+  form.append(
+    h("div", { class: "field" }, h("label", { for: note.id, text: "证据说明" }), note),
+    error,
+    h("div", { class: "modal-actions" }, save, close),
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    error.hidden = true;
+    try {
+      if (evidence) {
+        await data.updatePaperEvidence(ACTOR, {
+          questionId: question.questionId,
+          evidenceId: evidence.evidenceId,
+          kind: kind.value,
+          note: note.value,
+          now: new Date().toISOString(),
+        });
+      } else {
+        const paperSelect = document.getElementById("paperEvidencePaper");
+        const page = document.getElementById("paperEvidencePage");
+        const quote = document.getElementById("paperEvidenceQuote");
+        await data.addPaperEvidence(ACTOR, {
+          projectId: question.projectId,
+          questionId: question.questionId,
+          paperSha256: paperSelect.value,
+          page: Number(page.value),
+          quote: quote.value,
+          kind: kind.value,
+          note: note.value,
+          now: new Date().toISOString(),
+        });
+      }
+      closePaperEvidenceModal(false);
+      toast(evidence ? "证据分类与说明已更新" : "证据已关联到当前研究问题", "ok");
+      await onSaved();
+    } catch (saveError) {
+      error.hidden = false;
+      error.textContent = `保存失败：${saveError.message}`;
+      save.disabled = false;
+    }
+  });
+  close.addEventListener("click", () => closePaperEvidenceModal());
+  modal.append(form);
+  paperEvidenceModalState = { trigger, overlay };
+  attachModalBehavior(overlay, modal, () => closePaperEvidenceModal());
+  (evidence ? kind : document.getElementById("paperEvidencePaper")).focus();
+}
+
+function closePaperEvidenceModal(restoreFocus = true) {
+  const current = paperEvidenceModalState;
+  if (!current) return;
+  current.overlay.remove();
+  paperEvidenceModalState = null;
+  if (restoreFocus && current.trigger?.isConnected) current.trigger.focus();
+}
+
 let renderSeq = 0;
 
 async function renderQuestion(questionId) {
   const seq = ++renderSeq;
+  cleanupPaperReader();
   clear(main);
   const question = await data.getQuestion(ACTOR, questionId);
   if (seq !== renderSeq) return;
   if (!question) throw new Error(`问题不存在: ${questionId}`);
   const project = await data.getProject(ACTOR, question.projectId);
-  const paper = await data.getPaperStudy(ACTOR, question.projectId);
-  const paperFile = paper ? await data.getPaperFile(ACTOR, question.projectId, paper.sha256) : null;
-  const candidate = paper?.generation?.candidates.find((item) => item.questionId === questionId);
-  if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
-  if (candidate) {
-    const research = await data.getQuestionResearch(ACTOR, questionId);
-    if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
-    const researchPanel = await renderResearchWorkspace(question, research);
-    closeDrawer(false);
-    main.append(
-      h("a", { class: "back-link", href: `#/project/${question.projectId}`, text: "← 返回项目" }),
-      h("h1", { class: "q-claim", text: question.rawClaim }),
-      h("section", { class: "panel paper-candidate" },
-        h("h2", { text: "研究线索与文献出处" }),
-        h("p", { class: "aux", text: `${paper.title} · PDF 物理页码` }),
-        renderPaperEvidence(paper, candidate, paperFile),
-      ),
-    );
-    main.append(researchPanel);
-    return;
+  const papers = await data.listPaperStudies(ACTOR, question.projectId);
+  let candidatePaper = null;
+  let candidateIndex = -1;
+  let candidate = null;
+  for (const paper of papers) {
+    const index = paper.generation?.candidates.findIndex((item) => item.questionId === questionId) ?? -1;
+    if (index >= 0) {
+      candidatePaper = paper;
+      candidateIndex = index;
+      candidate = paper.generation.candidates[index];
+      break;
+    }
   }
-
+  const paperEvidence = await data.listPaperEvidence(ACTOR, questionId);
   const research = await data.getQuestionResearch(ACTOR, questionId);
   if (seq !== renderSeq || parseRoute().questionId !== questionId) return;
   const researchPanel = await renderResearchWorkspace(question, research);
+  const refreshPapers = () => renderQuestion(questionId);
+  const paperPanel = renderQuestionPaperPanel(question, papers, paperEvidence, candidate, candidatePaper, candidateIndex, refreshPapers);
 
   if (qView.questionId !== questionId) {
     closeDrawer(false);
@@ -3203,7 +4266,7 @@ async function renderQuestion(questionId) {
   qView.updateSteps = fillSteps;
 
   if (seq !== renderSeq) return;
-  main.append(head, steps);
+  main.append(head, steps, paperPanel);
 
   if (qView.statusText && seq === renderSeq) {
     main.append(
@@ -3432,6 +4495,7 @@ async function renderQuestion(questionId) {
         h("strong", { text: unavailable ? "AI 未接通（模型服务未配置）" : `AI 分析未完成（${modelGlyph(current.modelOutput).text}）` }),
         h("p", { text: reason }),
         h("p", { class: "aux", text: "矩阵与规则解释不受影响，可继续查看。" }),
+        unavailable ? h("a", { class: "back-link", href: "#/models", text: "前往模型服务配置 →" }) : null,
       ),
       h("button", {
         class: "btn",
@@ -3467,7 +4531,7 @@ async function renderQuestion(questionId) {
           await renderQuestion(questionId);
         },
       }),
-      unavailable ? h("p", { class: "aux", text: "模型服务未接通：需先在站点接入模型服务，重试才会生效。" }) : null,
+      unavailable ? h("p", { class: "aux", text: "配置并选择模型后返回此处，重试模型分析才会生效。" }) : null,
     );
   }
 
@@ -4242,6 +5306,7 @@ function finishSidebarResize(pointerId, persist = true) {
   if (persist && desktopSidebarQuery.matches) {
     window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }
+  window.dispatchEvent(new Event("agentflow:sidebar-resize-end"));
 }
 
 sidebarResizer.addEventListener("pointerdown", (event) => {
@@ -4348,4 +5413,5 @@ window.addEventListener("hashchange", () => {
   render();
 });
 
+void refreshAgent().catch((error) => console.info(`模型服务未启用：${error.message}`));
 render();

@@ -50,8 +50,8 @@ test("原版查看器复用 PDF.js、缩放与文字层或 OCR 区域高亮", ()
   assert.match(study, /class:\s*"modal modal--pdf"/);
   assert.match(study, /data:\s*file\.bytes/);
   assert.match(study, /Math\.min\(window\.devicePixelRatio \|\| 1, 2\)/);
-  assert.match(study, /locateInRegions\(paper\.pageRegions\[state\.page - 1\], state\.quote\)/);
-  assert.match(study, /locateInTextItems\(content\.items, state\.quote, viewport\)/);
+  assert.match(study, /locateInRegions\(paper\.pageRegions\[pageNumber - 1\], quote\)/);
+  assert.match(study, /locateInTextItems\(content\.items, quote, viewport\)/);
   assert.match(study, /left:\$\{rect\.x \* 100\}%/);
   assert.match(study, /sourceLink\.addEventListener\("click"/);
   assert.match(study, /openPdfViewer\(paper, file, evidence\.page, evidence\.quote, sourceLink\)/);

@@ -169,6 +169,7 @@ test("JS：拖动捕获指针、忽略多点与副键，并支持键盘和 Escap
   assert.match(js, /sidebarWidthFromKey\(sidebarWidth, event\.key\)/);
   assert.match(js, /event\.key !== "Escape"/);
   assert.match(js, /finishSidebarResize\(resizePointerId\)/);
+  assert.match(js, /window\.dispatchEvent\(new Event\("agentflow:sidebar-resize-end"\)\)/);
 });
 
 test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落叶", () => {
@@ -176,7 +177,7 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
   assert.match(js, /image\.src = image\.dataset\.src/);
   assert.match(js, /shell\.classList\.add\("sidebar-tree-ready"\)/);
   assert.match(js, /shell\.classList\.add\("sidebar-feather-ready"\)/);
-  assert.doesNotMatch(js, /sidebarFeatherImage|sidebarFeatherReadyCount/);
+  assert.doesNotMatch(js, /sidebarFeatherImage/);
   assert.match(js, /function emitSidebarLeaves\(\)/);
   assert.match(js, /sidebarReducedMotionQuery\.matches/);
   assert.match(js, /sidebarLeafLayer\.childElementCount >= 12/);
@@ -185,24 +186,6 @@ test("PNG 素材：自动加载透明位图，拖动时从树梢生成少量落�
   assert.match(js, /--leaf-drift/);
   assert.match(js, /animationend/);
   assert.match(js, /emitSidebarLeaves\(\);/);
-});
-
-test("卡片羽毛：右上角改用透明 PNG，装饰不进入交互与无障碍树", () => {
-  const cardMarkup = js.slice(js.indexOf("function cardFor("), js.indexOf("async function updateGrid("));
-  assert.match(cardMarkup, /h\("img", \{/);
-  assert.match(cardMarkup, /class: "card-feather"/);
-  assert.match(cardMarkup, /src: "\.\/assets\/sidebar-feather\.png"/);
-  assert.match(cardMarkup, /alt: ""/);
-  assert.match(cardMarkup, /draggable: "false"/);
-  assert.match(cardMarkup, /"aria-hidden": "true"/);
-  assert.doesNotMatch(cardMarkup, /<svg/);
-  const feather = ruleBody(css, ".card-feather");
-  assert.match(feather, /position:\s*absolute/);
-  assert.match(feather, /top:\s*12px/);
-  assert.match(feather, /right:\s*16px/);
-  assert.match(feather, /object-fit:\s*contain/);
-  assert.match(feather, /pointer-events:\s*none/);
-  assert.doesNotMatch(css, /\.card-feather svg/);
 });
 
 test("PNG 素材：三张正式位图具备透明通道、干净边缘与右下角无水印", () => {
@@ -244,12 +227,20 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   assert.match(collapsedSidebar, /padding-inline:\s*0/);
   assert.match(collapsedSidebar, /visibility:\s*hidden/);
   const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
+  assert.match(resizer, /position:\s*fixed/);
+  assert.match(resizer, /top:\s*56px/);
+  assert.match(resizer, /left:\s*calc\(var\(--sidebar-width\) - 6px\)/);
+  assert.match(resizer, /right:\s*auto/);
+  assert.match(resizer, /height:\s*calc\(100vh - 56px\)/);
+  assert.match(resizer, /height:\s*calc\(100dvh - 56px\)/);
+  assert.doesNotMatch(resizer, /bottom:\s*0/);
   assert.match(resizer, /cursor:\s*col-resize/);
   assert.match(resizer, /touch-action:\s*none/);
   assert.match(resizer, /outline:\s*none/);
   assert.doesNotMatch(sidebarCss, /\.sidebar-resizer::after|\.sidebar-resizer:hover|\.sidebar-resizer:focus-visible/);
-  assert.doesNotMatch(sidebarCss, /\.sidebar-feather\s*\{|\.sidebar-feather-image/);
+  assert.doesNotMatch(sidebarCss, /\.sidebar-feather\s*\{/);
   assert.match(sidebarCss, /\.sidebar-feather-mark-image,\s*\.sidebar-tree-image\s*\{[^}]*pointer-events:\s*none/);
+  assert.doesNotMatch(sidebarCss, /\.sidebar-feather-image/);
   assert.match(ruleBody(sidebarCss, ".sidebar-feather-mark"), /color:\s*var\(--brand\)/);
   assert.match(ruleBody(css, ".nav-btn"), /display:\s*inline-flex/);
   const treeAt = sidebarCss.lastIndexOf("\n.sidebar-tree-image {");
@@ -265,13 +256,22 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   const hitWidth = Number(readyResizer.match(/width:\s*(\d+)px/)?.[1]);
   assert.equal(hitWidth, 136);
   assert.ok(treeWidth - hitWidth > 0 && treeWidth - hitWidth <= 16, "命中区应略窄于树木贴图");
-  assert.match(readyResizer, /right:\s*-28px/);
+  assert.match(readyResizer, /left:\s*calc\(var\(--sidebar-width\) - 72px\)/);
+  assert.match(readyResizer, /right:\s*auto/);
   const readyTree = ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image");
   assert.match(readyTree, /display:\s*block/);
   assert.match(readyTree, /right:\s*-4px/);
   assert.match(ruleBody(sidebarCss, ".sidebar-leaf-layer"), /pointer-events:\s*none/);
   assert.match(sidebarCss, /@keyframes sidebar-leaf-fall/);
   assert.match(sidebarCss, /animation:\s*sidebar-leaf-fall 1100ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+});
+
+test("CSS：论文页滚动时把手固定在顶栏下沿，原版与文字重排共享同一位置", () => {
+  const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
+  assert.match(resizer, /position:\s*fixed/);
+  assert.match(resizer, /top:\s*56px/);
+  assert.match(resizer, /height:\s*calc\(100dvh - 56px\)/);
+  assert.doesNotMatch(css, /body:has\(\.reader-layout\) \.sidebar\s*\{[^}]*top:/);
 });
 
 test("CSS：窄屏隐藏把手与按钮文字，减少动效偏好降级", () => {

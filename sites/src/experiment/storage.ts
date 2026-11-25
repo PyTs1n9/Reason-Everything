@@ -32,12 +32,16 @@ import type { AnalysisModelOutput } from "../agent/adapter.ts";
 import { validateRevision } from "./revision.ts";
 import { buildEvidencePackage, type EvidencePackage } from "./evidence.ts";
 import { runContentKey } from "./import.ts";
-import type {
-  PaperCandidate,
-  PaperPageSource,
-  PaperRegion,
-  PaperSource,
-  PaperStudy,
+import {
+  PAPER_EVIDENCE_KINDS,
+  verifyPaperQuote,
+  type PaperCandidate,
+  type PaperEvidence,
+  type PaperEvidenceKind,
+  type PaperPageSource,
+  type PaperRegion,
+  type PaperSource,
+  type PaperStudy,
 } from "../web/paper-study.ts";
 
 export interface Actor {
@@ -61,6 +65,8 @@ export interface StoreState {
   paperStudies?: PaperStudy[];
   /** 原 PDF 字节按项目与文件指纹保存，供刷新后回查原版。 */
   paperFiles?: PaperFileBytes[];
+  /** 问题与项目文献原文的关联，解除关联不删除文献。 */
+  paperEvidence?: PaperEvidence[];
   /** 问题级研究记录，旧分区可能没有此键；不改变四种冻结业务身份。 */
   researchRecords?: ResearchRecordState;
 }
@@ -162,6 +168,25 @@ export interface AppendVerificationResultInput {
   basis: string;
   verifiedOn: string;
   conclusion: VerificationConclusion;
+  now: string;
+}
+
+export interface AddPaperEvidenceInput {
+  projectId: string;
+  questionId: string;
+  paperSha256: string;
+  page: number;
+  quote: string;
+  kind: PaperEvidenceKind;
+  note: string;
+  now: string;
+}
+
+export interface UpdatePaperEvidenceInput {
+  questionId: string;
+  evidenceId: string;
+  kind: PaperEvidenceKind;
+  note: string;
   now: string;
 }
 
@@ -284,9 +309,14 @@ export interface DataService {
   attachPaperFile(actor: Actor, projectId: string, file: PaperFileInput): Promise<PaperFileBytes>;
   getPaperFile(actor: Actor, projectId: string, sha256?: string): Promise<PaperFileBytes | null>;
   updatePaperPageOcr(actor: Actor, input: { projectId: string; sha256?: string; now: string; update: PaperOcrPageUpdate }): Promise<PaperStudy>;
-  getPaperStudy(actor: Actor, projectId: string): Promise<PaperStudy | null>;
-  savePaperCandidates(actor: Actor, projectId: string, generation: { model: string; candidates: PaperCandidate[] }): Promise<PaperStudy>;
+  listPaperStudies(actor: Actor, projectId: string): Promise<PaperStudy[]>;
+  getPaperStudy(actor: Actor, projectId: string, sha256?: string): Promise<PaperStudy | null>;
+  savePaperCandidates(actor: Actor, projectId: string, generation: { model: string; candidates: PaperCandidate[] }, sha256?: string): Promise<PaperStudy>;
   acceptPaperCandidate(actor: Actor, input: { projectId: string; candidateId: string; question: string; now: string }): Promise<Question>;
+  listPaperEvidence(actor: Actor, questionId: string): Promise<PaperEvidence[]>;
+  addPaperEvidence(actor: Actor, input: AddPaperEvidenceInput): Promise<PaperEvidence>;
+  updatePaperEvidence(actor: Actor, input: UpdatePaperEvidenceInput): Promise<PaperEvidence>;
+  removePaperEvidence(actor: Actor, input: { questionId: string; evidenceId: string; now: string }): Promise<void>;
 
   getQuestionResearch(actor: Actor, questionId: string): Promise<QuestionResearch>;
   saveResearchNote(actor: Actor, input: SaveResearchNoteInput): Promise<ResearchNote>;
@@ -405,30 +435,18 @@ function storePaperFile(draft: StoreState, projectId: string, file: PaperFileInp
   files.push({ projectId, filename: file.filename, sha256: file.sha256, bytes: clone(file.bytes) });
 }
 
-function deriveQuestionStatus(draft: StoreState, question: Question): QuestionStatus {
-  if (!question.confirmedClaim) return "needs_input";
-  const pkg = buildEvidencePackage(question.confirmedClaim, projectRuns(draft, question.projectId), {
-    projectId: question.projectId,
-    questionId: question.questionId,
-  });
-  return pkg.status;
+function paperEvidenceKind(value: unknown): PaperEvidenceKind {
+  if (!PAPER_EVIDENCE_KINDS.includes(value as PaperEvidenceKind)) {
+    throw new StorageError("invalid_paper_evidence", "证据类别无效");
+  }
+  return value as PaperEvidenceKind;
 }
 
-function orderedRevisions(draft: StoreState, question: Question): AnalysisRevision[] {
-  const ofQuestion = draft.revisions.filter((r) => r.questionId === question.questionId);
-  const byId = new Map(ofQuestion.map((r) => [r.revisionId, r]));
-  const chain: AnalysisRevision[] = [];
-  let cursor = question.currentRevisionId ? byId.get(question.currentRevisionId) : undefined;
-  while (cursor) {
-    chain.push(cursor);
-    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+function paperEvidenceNote(value: unknown): string {
+  if (typeof value !== "string" || !value.trim() || Array.from(value.trim()).length > 500) {
+    throw new StorageError("invalid_paper_evidence", "证据说明不能为空且不能超过 500 个字符");
   }
-  chain.reverse();
-  const chained = new Set(chain.map((r) => r.revisionId));
-  const rest = ofQuestion
-    .filter((r) => !chained.has(r.revisionId))
-    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
-  return [...chain, ...rest];
+  return value.trim();
 }
 
 function requireQuestion(draft: StoreState, questionId: string): Question {
@@ -507,6 +525,32 @@ function verificationConclusion(value: VerificationConclusion): VerificationConc
   return value;
 }
 
+function deriveQuestionStatus(draft: StoreState, question: Question): QuestionStatus {
+  if (!question.confirmedClaim) return "needs_input";
+  const pkg = buildEvidencePackage(question.confirmedClaim, projectRuns(draft, question.projectId), {
+    projectId: question.projectId,
+    questionId: question.questionId,
+  });
+  return pkg.status;
+}
+
+function orderedRevisions(draft: StoreState, question: Question): AnalysisRevision[] {
+  const ofQuestion = draft.revisions.filter((r) => r.questionId === question.questionId);
+  const byId = new Map(ofQuestion.map((r) => [r.revisionId, r]));
+  const chain: AnalysisRevision[] = [];
+  let cursor = question.currentRevisionId ? byId.get(question.currentRevisionId) : undefined;
+  while (cursor) {
+    chain.push(cursor);
+    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+  }
+  chain.reverse();
+  const chained = new Set(chain.map((r) => r.revisionId));
+  const rest = ofQuestion
+    .filter((r) => !chained.has(r.revisionId))
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+  return [...chain, ...rest];
+}
+
 export function createDataService(backend: StorageBackend): DataService {
   return {
     async createProject(actor, name, now, projectId) {
@@ -514,14 +558,14 @@ export function createDataService(backend: StorageBackend): DataService {
     },
 
     async importPaper(actor, { name, paper, now, projectId, file }) {
+      if (!/^[a-f0-9]{64}$/i.test(paper.sha256)) throw new Error("PDF 文件 SHA-256 无效");
       if (file && file.sha256 !== paper.sha256) throw new ConflictError("paper_file_mismatch", "原 PDF 与入库文件指纹不一致");
       if (!paper.pages.some((page) => page.trim()) && !file) throw new Error("PDF 没有可入库的文字");
       const normalized = normalizePaperPages(paper);
       return backend.transact(actor, (draft) => {
         const project = projectId ? requireProject(draft, projectId) : insertProject(draft, name, now);
         const studies = draft.paperStudies ??= [];
-        const existing = studies.find((study) => study.projectId === project.projectId);
-        if (existing && existing.sha256 !== paper.sha256) throw new ConflictError("paper_exists", "项目已入库另一份 PDF");
+        const existing = studies.find((study) => study.projectId === project.projectId && study.sha256 === paper.sha256);
         if (!existing) {
           studies.push({ ...normalized, projectId: project.projectId, generation: null });
           touch(project, now);
@@ -530,7 +574,7 @@ export function createDataService(backend: StorageBackend): DataService {
           existing.pageErrors ??= normalized.pageErrors;
           existing.pageRegions ??= normalized.pageRegions;
         }
-        if (file) storePaperFile(draft, project.projectId, file);
+        if (file) storePaperFile(draft, project.projectId, { ...file, projectId: project.projectId });
         return clone(project);
       });
     },
@@ -539,7 +583,7 @@ export function createDataService(backend: StorageBackend): DataService {
       return backend.transact(actor, (draft) => {
         requireProject(draft, projectId);
         requirePaperStudy(draft, projectId, file.sha256);
-        storePaperFile(draft, projectId, file);
+        storePaperFile(draft, projectId, { ...file, projectId });
         return clone(draft.paperFiles?.find((item) => item.projectId === projectId && item.sha256 === file.sha256) as PaperFileBytes);
       });
     },
@@ -579,15 +623,21 @@ export function createDataService(backend: StorageBackend): DataService {
       });
     },
 
-    async getPaperStudy(actor, projectId) {
+    async listPaperStudies(actor, projectId) {
       const state = await backend.read(actor);
       requireProject(state, projectId);
-      return clone(state.paperStudies?.find((study) => study.projectId === projectId) ?? null);
+      return clone(state.paperStudies?.filter((study) => study.projectId === projectId) ?? []);
     },
 
-    async savePaperCandidates(actor, projectId, generation) {
+    async getPaperStudy(actor, projectId, sha256) {
+      const state = await backend.read(actor);
+      requireProject(state, projectId);
+      return clone(state.paperStudies?.find((study) => study.projectId === projectId && (!sha256 || study.sha256 === sha256)) ?? null);
+    },
+
+    async savePaperCandidates(actor, projectId, generation, sha256) {
       return backend.transact(actor, (draft) => {
-        const study = requirePaperStudy(draft, projectId);
+        const study = requirePaperStudy(draft, projectId, sha256);
         if (!study.generation?.candidates.length) {
           study.generation = {
             model: generation.model,
@@ -607,12 +657,20 @@ export function createDataService(backend: StorageBackend): DataService {
       if (!rawClaim || rawClaim.length > 300) throw new Error("请填写 1 到 300 字符的研究问题");
       return backend.transact(actor, (draft) => {
         const project = requireProject(draft, input.projectId);
-        const study = requirePaperStudy(draft, input.projectId);
-        const candidate = study.generation?.candidates.find(({ id }) => id === input.candidateId);
-        if (!candidate) throw new NotFoundError("候选问题不存在");
+        let accepted: { candidate: PaperCandidate & { id: string; questionId: string | null } } | null = null;
+        for (const study of draft.paperStudies ?? []) {
+          if (study.projectId !== project.projectId) continue;
+          const candidate = study.generation?.candidates.find(({ id }) => id === input.candidateId);
+          if (candidate) {
+            accepted = { candidate };
+            break;
+          }
+        }
+        if (!accepted) throw new NotFoundError("候选问题不存在");
+        const { candidate } = accepted;
         if (candidate.questionId) {
           const existing = draft.questions.find((question) => question.questionId === candidate.questionId);
-          if (!existing) throw new NotFoundError("已确认的研究问题不存在");
+          if (!existing || existing.projectId !== project.projectId) throw new NotFoundError("已确认的研究问题不存在");
           return clone(existing);
         }
         const question = insertQuestion(draft, project, {
@@ -620,6 +678,66 @@ export function createDataService(backend: StorageBackend): DataService {
         });
         candidate.questionId = question.questionId;
         return clone(question);
+      });
+    },
+
+    async listPaperEvidence(actor, questionId) {
+      const state = await backend.read(actor);
+      requireQuestion(state, questionId);
+      return clone((state.paperEvidence ?? [])
+        .filter((evidence) => evidence.questionId === questionId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+    },
+
+    async addPaperEvidence(actor, input) {
+      const kind = paperEvidenceKind(input.kind);
+      const note = paperEvidenceNote(input.note);
+      return backend.transact(actor, (draft) => {
+        const question = requireQuestion(draft, input.questionId);
+        if (question.projectId !== input.projectId) throw new StorageError("cross_project_evidence", "问题不属于指定项目");
+        const paper = requirePaperStudy(draft, input.projectId, input.paperSha256);
+        const citation = verifyPaperQuote(paper, input.page, input.quote);
+        const now = input.now;
+        const evidence: PaperEvidence = {
+          evidenceId: crypto.randomUUID(),
+          projectId: input.projectId,
+          questionId: input.questionId,
+          paperSha256: paper.sha256,
+          page: citation.page,
+          quote: citation.quote,
+          kind,
+          note,
+          createdAt: now,
+          updatedAt: now,
+        };
+        (draft.paperEvidence ??= []).push(evidence);
+        touch(requireProject(draft, input.projectId), now);
+        return clone(evidence);
+      });
+    },
+
+    async updatePaperEvidence(actor, input) {
+      const kind = paperEvidenceKind(input.kind);
+      const note = paperEvidenceNote(input.note);
+      return backend.transact(actor, (draft) => {
+        requireQuestion(draft, input.questionId);
+        const evidence = draft.paperEvidence?.find((item) => item.evidenceId === input.evidenceId && item.questionId === input.questionId);
+        if (!evidence) throw new NotFoundError("研究证据不存在");
+        evidence.kind = kind;
+        evidence.note = note;
+        evidence.updatedAt = input.now;
+        touch(requireProject(draft, evidence.projectId), input.now);
+        return clone(evidence);
+      });
+    },
+
+    async removePaperEvidence(actor, input) {
+      return backend.transact(actor, (draft) => {
+        const question = requireQuestion(draft, input.questionId);
+        const evidence = draft.paperEvidence?.find((item) => item.evidenceId === input.evidenceId && item.questionId === input.questionId);
+        if (!evidence) throw new NotFoundError("研究证据不存在");
+        draft.paperEvidence = draft.paperEvidence!.filter((item) => item.evidenceId !== evidence.evidenceId);
+        touch(requireProject(draft, question.projectId), input.now);
       });
     },
 
@@ -799,6 +917,7 @@ export function createDataService(backend: StorageBackend): DataService {
         draft.projects = draft.projects.filter((p) => p.projectId !== projectId);
         if (draft.paperStudies) draft.paperStudies = draft.paperStudies.filter((study) => study.projectId !== projectId);
         if (draft.paperFiles) draft.paperFiles = draft.paperFiles.filter((file) => file.projectId !== projectId);
+        if (draft.paperEvidence) draft.paperEvidence = draft.paperEvidence.filter((evidence) => evidence.projectId !== projectId && !questionIds.has(evidence.questionId));
         draft.questions = draft.questions.filter((q) => !questionIds.has(q.questionId));
         draft.runs = draft.runs.filter((r) => r.projectId !== projectId);
         draft.revisions = draft.revisions.filter((r) => !questionIds.has(r.questionId));

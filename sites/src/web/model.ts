@@ -125,6 +125,46 @@ export function typeColorClass(type: string): string {
   }
 }
 
+const CARD_FEATHER_PALETTES = [
+  ["#79b995", "#b7a6e8", "#e6c88f"],
+  ["#78c5bd", "#8fb4e5", "#e4b4c7"],
+  ["#d2ad72", "#ca9fb6", "#9dc3a7"],
+  ["#8ac7a6", "#77b7c9", "#c5b5e6"],
+] as const;
+
+export interface CardFeatherVariant {
+  id: string;
+  colors: readonly [string, string, string];
+  x: number;
+  y: number;
+  scale: number;
+  rotate: number;
+  angle: number;
+  glowX: number;
+  glowY: number;
+}
+
+/** 按项目身份生成稳定的配色、位置与光晕参数，避免搜索重绘时装饰跳动。 */
+export function cardFeatherVariant(seed: string): CardFeatherVariant {
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  const unsigned = hash >>> 0;
+  return {
+    id: unsigned.toString(36),
+    colors: CARD_FEATHER_PALETTES[unsigned % CARD_FEATHER_PALETTES.length],
+    x: 12 + ((unsigned >>> 3) % 12),
+    y: 10 + ((unsigned >>> 7) % 12),
+    scale: 0.9 + ((unsigned >>> 11) % 15) / 100,
+    rotate: -4 + ((unsigned >>> 15) % 9),
+    angle: 112 + ((unsigned >>> 19) % 17),
+    glowX: 22 + ((unsigned >>> 23) % 66),
+    glowY: 12 + ((unsigned >>> 27) % 38),
+  };
+}
+
 /** PDF 题名：元数据优先，退回全文首行；均无则空串（不猜题名）。 */
 export function extractPaperTitle(input: { metaTitle?: string; firstPageText?: string }): string {
   const meta = (input.metaTitle ?? "").trim();
@@ -394,4 +434,162 @@ export function buildQuestionMatrix(
       seed: anchor ? String(anchor.config.seed) : "—",
     },
   };
+}
+
+// ---------- 论文页排版（卡 22）：把 PDF 逐行文字还原成可读段落 ----------
+
+export type PaperBlockKind = "title" | "heading" | "meta" | "body";
+
+export interface PaperBlock {
+  kind: PaperBlockKind;
+  text: string;
+}
+
+/** 期刊页眉/摘要标签等版式行：不并入正文段落。 */
+const PAPER_META_LINE =
+  /^(?:\d{4}\s*年|第\s*\d+\s*卷|第\s*\d+\s*期|Vol\.|No\.|ISSN|DOI|中图法分类号|文献标识码|文章编号|收稿日期|基金项目|作者简介|Journal of|Proceedings|中国.*(?:学报|期刊|杂志)$|（[^）]{6,}）$|[\u4e00-\u9fa5]{1,4}(?:\s+[\u4e00-\u9fa5]{1,4}){1,4}$|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$)/i;
+
+/** 章节标题：1 引言 / 2.1 相关工作 / 一、方法 / （一）结论 / 第 3 章。 */
+const PAPER_HEADING_LINE =
+  /^(?:第\s*[一二三四五六七八九十百\d]+\s*[章节篇]|[一二三四五六七八九十]+[、.．]|（[一二三四五六七八九十\d]+）|\d+(?:\.\d+){0,3}\s+[^\d\s])/;
+
+const PAPER_SENTENCE_END = /[。！？!?…”’"']$/;
+const CJK_CHAR = /[\u2e80-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/;
+
+function codePointLen(text: string): number {
+  return Array.from(text).length;
+}
+
+/** 合并同一段内的折行：中文直接相连，英文补空格，连字符保留。 */
+export function joinPaperLines(lines: readonly string[]): string {
+  let out = "";
+  for (const raw of lines) {
+    const line = raw.trim().replace(/\s{2,}/g, " ");
+    if (!line) continue;
+    if (!out) {
+      out = line;
+      continue;
+    }
+    const prev = Array.from(out).at(-1) ?? "";
+    const next = Array.from(line)[0] ?? "";
+    if (prev === "-" && /[A-Za-z0-9]/.test(next)) {
+      out += line;
+      continue;
+    }
+    const noSpace =
+      CJK_CHAR.test(prev) ||
+      CJK_CHAR.test(next) ||
+      /[，。！？；：、）】》”’…]/.test(prev) ||
+      /^[，。！？；：、）】》”’]/.test(line);
+    out += noSpace ? line : ` ${line}`;
+  }
+  return out;
+}
+
+/**
+ * 页文本 → 段落块。空行必断段；正文行以句末标点收尾且明显短于本页中位行宽时断段，
+ * 避免把整栏并成一块。页眉、章节标题各自成块，阅读页据此分层排版。
+ */
+export function paragraphizePage(text: string, options: { firstPage?: boolean } = {}): PaperBlock[] {
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, "").trim());
+
+  const blocks: PaperBlock[] = [];
+  let body: string[] = [];
+  let metaLines: string[] = [];
+  let blankBefore = false;
+  const pushBody = (text: string) => {
+    const points = Array.from(text);
+    if (points.length <= 460) {
+      blocks.push({ kind: "body", text });
+      return;
+    }
+    // 无段落信息的长栏：按句末切成 300 字左右的阅读块，不硬造原文没有的分段。
+    const sentences = text.match(/[^。！？!?]+[。！？!?]+|[^。！？!?]+$/g) ?? [text];
+    let chunk = "";
+    for (const sentence of sentences) {
+      if (chunk && Array.from(chunk + sentence).length > 300) {
+        blocks.push({ kind: "body", text: chunk });
+        chunk = sentence;
+      } else {
+        chunk += sentence;
+      }
+    }
+    if (chunk) blocks.push({ kind: "body", text: chunk });
+  };
+  const flushMeta = () => {
+    if (metaLines.length === 0) return;
+    blocks.push({ kind: "meta", text: metaLines.join(" · ") });
+    metaLines = [];
+  };
+  const flush = () => {
+    if (body.length === 0) return;
+    pushBody(joinPaperLines(body));
+    body = [];
+  };
+
+  for (const line of lines) {
+    if (!line) {
+      flush();
+      blankBefore = true;
+      continue;
+    }
+    if (PAPER_META_LINE.test(line)) {
+      flush();
+      metaLines.push(line.replace(/\s{2,}/g, " "));
+      blankBefore = false;
+      continue;
+    }
+    if (PAPER_HEADING_LINE.test(line)) {
+      flush();
+      flushMeta();
+      blocks.push({ kind: "heading", text: line.replace(/\s{2,}/g, " ") });
+      blankBefore = false;
+      continue;
+    }
+    flushMeta();
+    // 摘要与关键词即使没有空行也各成一段；中文正文后的英文题名/作者同理。
+    const prevLine = body.at(-1) ?? "";
+    const asciiFrontMatter =
+      /[\u4e00-\u9fff]/.test(prevLine) &&
+      !/[\u4e00-\u9fff]/.test(line) &&
+      /^[A-Z][A-Za-z0-9 ,.&'’\-]+$/.test(line);
+    if (body.length > 0 && (blankBefore || asciiFrontMatter || /^(?:摘\s*要|关键词|Abstract|Key\s*words)[:：]/.test(line))) flush();
+    body.push(line);
+    blankBefore = false;
+  }
+  flush();
+  flushMeta();
+
+  if (options.firstPage) {
+    const pick = blocks.slice(0, 6).find((block) =>
+      block.kind === "body" &&
+      codePointLen(block.text) >= 6 &&
+      codePointLen(block.text) <= 90 &&
+      !PAPER_SENTENCE_END.test(block.text) &&
+      !/^(?:摘\s*要|关键词|Abstract|Key\s*words|参\s*考\s*文\s*献)/i.test(block.text),
+    );
+    if (pick) {
+      const at = blocks.indexOf(pick);
+      blocks[at] = { ...pick, kind: "title" };
+      // 标题之后的英文题名、作者、单位属于版头，不当作正文段落；英文摘要保持正文。
+      for (let i = at + 1; i < Math.min(blocks.length, at + 12); i++) {
+        const block = blocks[i]!;
+        if (block.kind === "heading") break;
+        if (block.kind !== "body") continue;
+        if (/^(?:摘\s*要|关键词|Abstract|Key\s*words|参\s*考\s*文\s*献)[:：]?/i.test(block.text)) continue;
+        if (!/[\u3400-\u9fff]/.test(block.text)) blocks[i] = { ...block, kind: "meta" };
+      }
+    }
+  }
+  return blocks;
+}
+
+/** 阅读进度用的字数：汉字按字、拉丁按词。 */
+export function countPaperChars(text: string): number {
+  const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+  const latin = (text.replace(/[\u3400-\u9fff]/g, " ").match(/[A-Za-z0-9]+(?:[.．][0-9]+)?/g) ?? []).length;
+  return cjk + latin;
 }
