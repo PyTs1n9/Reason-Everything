@@ -36,6 +36,18 @@ test("搜索与右上角操作同属一个可访问工具条，计数并入最�
   assert.match(ruleBody(".workbench-list-head[hidden]"), /display:\s*none/);
 });
 
+test("水晶工具条下方提供研究领域筛选，并与名称搜索和数量更新共用列表", () => {
+  assert.match(js, /const categoryButtons = \["全部", \.\.\.PROJECT_TYPES\]\.map/);
+  assert.match(js, /class: "workbench-categories",[\s\S]*?"aria-label": "按研究领域筛选项目"/);
+  assert.match(js, /"aria-pressed": String\(value === activeProjectType\)/);
+  assert.match(js, /"aria-controls": "projectGridHost"/);
+  assert.match(js, /button\.addEventListener\("click", \(\) => \{\s*activeProjectType = value;[\s\S]*?item\.setAttribute\("aria-pressed", String\(item === button\)\);\s*updateGrid\(\);/);
+  assert.match(js, /const controls = h\("div", \{ class: "workbench-controls" \}, tools, categories\);/);
+  assert.match(js, /filterProjectsByType\(searched, loadProjectTypes\(\), activeProjectType\)/);
+  assert.match(js, /categories\.hidden = allProjects\.length === 0;/);
+  assert.match(js, /document\.getElementById\("projectCount"\)\.textContent =\s*allProjects\.length === 0 \? "" : `\$\{list\.length\} 个项目`;/);
+});
+
 test("项目搜索移除 Ctrl K 提示与快捷键，仅保留输入和 Escape 清空", () => {
   assert.match(js, /placeholder: "搜索项目"/);
   assert.match(js, /"aria-label": "搜索项目"/);
@@ -56,6 +68,20 @@ test("工具条使用半透明玻璃、折射高光与内描边，搜索不再�
   assert.match(search, /background:\s*transparent/);
   assert.match(search, /background-image:\s*none/);
   assert.match(search, /border:\s*1px solid transparent/);
+});
+
+test("研究领域栏沿用半透明水晶材质，并提供选中和键盘焦点状态", () => {
+  const panel = ruleBody(".workbench-categories");
+  assert.match(panel, /background:[^;]*radial-gradient[^;]*linear-gradient/s);
+  assert.match(panel, /backdrop-filter:\s*blur\(14px\) saturate\(130%\)/);
+  assert.match(panel, /box-shadow:[^;]*inset 0 1px 0 var\(--glass-highlight\)/s);
+  assert.match(panel, /border-radius:\s*14px/);
+  assert.match(ruleBody(".workbench-categories::before"), /linear-gradient\(115deg/);
+  assert.match(ruleBody(".workbench-categories::before"), /pointer-events:\s*none/);
+  assert.match(ruleBody(".workbench-categories::before"), /user-select:\s*none/);
+  assert.match(ruleBody(".workbench-categories[hidden]"), /display:\s*none/);
+  assert.match(ruleBody(".category-chip[aria-pressed=\"true\"]"), /background:\s*linear-gradient/);
+  assert.match(ruleBody(".category-chip:focus-visible"), /box-shadow:[^;]*0 0 0 3px var\(--glass-focus\)/);
 });
 
 test("三个操作共用尺寸与玻璃底，仅导入 PDF 保留主操作权重", () => {
@@ -82,15 +108,28 @@ test("桌面保持同级，窄屏工具条内部 stack 且三个操作等宽", (
   assert.match(mediaBody("(max-width: 380px)"), /\.workbench-tools \.head-actions \.btn svg\s*\{[^}]*width:\s*14px/s);
 });
 
+test("研究领域栏在窄屏铺满并换行，触控目标保持 44px", () => {
+  const tablet = mediaBody("(max-width: 1199px)");
+  assert.match(tablet, /\.workbench-controls\s*\{[^}]*width:\s*100%[^}]*align-items:\s*stretch/s);
+  assert.match(tablet, /\.workbench-categories,[\s\S]*?\.workbench-category-list\s*\{[^}]*justify-content:\s*flex-start/s);
+  const mobile = mediaBody("(max-width: 640px)");
+  assert.match(mobile, /\.workbench-categories\s*\{[^}]*padding:\s*7px/s);
+  assert.match(mobile, /\.category-chip\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(ruleBody(".workbench-category-list"), /flex-wrap:\s*wrap/);
+});
+
 test("聚焦、减少透明度和减少动效偏好均有明确降级", () => {
   const focus = ruleBody(".workbench-tools .search-box input[type=\"search\"]:focus-visible");
   assert.match(focus, /outline:\s*none/);
   assert.match(focus, /box-shadow:[^;]*0 0 0 3px var\(--glass-focus\)/);
   const noMotion = mediaBody("(prefers-reduced-motion: reduce)");
-  assert.match(noMotion, /\.workbench-tools::before,[\s\S]*?transition:\s*none/);
+  assert.match(noMotion, /\.workbench-tools::before,[\s\S]*?\.category-chip\s*\{[^}]*transition:\s*none/s);
   assert.match(noMotion, /\.workbench-tools:hover::before,[\s\S]*?transform:\s*none/);
   const noTransparency = mediaBody("(prefers-reduced-transparency: reduce)");
   assert.match(noTransparency, /\.workbench-tools\s*\{[^}]*background:\s*var\(--surface\)[^}]*backdrop-filter:\s*none/s);
-  assert.match(noTransparency, /\.workbench-tools::before,[\s\S]*?display:\s*none/);
-  assert.match(mediaBody("(forced-colors: active)"), /border-color:\s*CanvasText/);
+  assert.match(noTransparency, /\.workbench-categories\s*\{[^}]*background:\s*var\(--surface\)[^}]*backdrop-filter:\s*none/s);
+  assert.match(noTransparency, /\.workbench-tools::before,[\s\S]*?\.workbench-categories::before\s*\{[^}]*display:\s*none/s);
+  const forced = mediaBody("(forced-colors: active)");
+  assert.match(forced, /\.workbench-categories\s*\{[^}]*border-color:\s*CanvasText[^}]*background:\s*Canvas/s);
+  assert.match(forced, /\.category-chip\[aria-pressed="true"\]\s*\{[^}]*background:\s*Highlight/s);
 });

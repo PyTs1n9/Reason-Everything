@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { ProjectSummary } from "../src/experiment/storage.ts";
 import type { TrainingRun } from "../src/experiment/types.ts";
 import {
+  PROJECT_TYPES,
   buildQuestionFormProfile,
   buildSideTree,
   cardFeatherVariant,
@@ -13,6 +14,7 @@ import {
   evaluateEntryMissing,
   extractPaperTitle,
   filterProjects,
+  filterProjectsByType,
   formatUpdatedAt,
   highlightMatches,
   modelGlyph,
@@ -55,6 +57,26 @@ test("项目搜索按名称过滤，空查询保持原列表", () => {
   assert.deepEqual(filterProjects(list, "学习率").map((p) => p.projectId), ["p2"]);
   assert.deepEqual(filterProjects(list, "  增强 ").map((p) => p.projectId), ["p1"]);
   assert.equal(filterProjects(list, "不存在").length, 0);
+});
+
+test("研究领域筛选支持全部、类型精确匹配并与名称搜索组合", () => {
+  const list = [
+    project("p1", "视觉模型研究", "2026-11-21T10:00:00.000Z"),
+    project("p2", "算法研究", "2026-11-21T09:00:00.000Z"),
+    project("p3", "历史研究", "2026-11-21T08:00:00.000Z"),
+    project("p4", "未标注研究", "2026-11-21T07:00:00.000Z"),
+  ];
+  const types = { p1: "人工智能", p2: "计算机科学", p3: "其他", p4: "未知领域" };
+  const all = filterProjectsByType(list, types, "   ");
+  assert.deepEqual(all, list);
+  assert.notEqual(all, list);
+  assert.deepEqual(filterProjectsByType(list, types, "人工智能").map((p) => p.projectId), ["p1"]);
+  assert.deepEqual(filterProjectsByType(list, types, "其他").map((p) => p.projectId), ["p3"]);
+  assert.deepEqual(
+    filterProjectsByType(filterProjects(list, "模型"), types, "人工智能").map((p) => p.projectId),
+    ["p1"],
+  );
+  assert.deepEqual(filterProjectsByType(filterProjects(list, "模型"), types, "医学"), []);
 });
 
 test("更新时间格式化为 MM-DD HH:mm", () => {
@@ -188,7 +210,9 @@ test("长运行名与格式化：accuracy 始终一位小数百分数", () => {
 // ---------- 卡 13：项目类型标签 + 侧栏树 ----------
 
 test("项目类型只认字典内取值，其余归「其他」", () => {
+  assert.deepEqual(PROJECT_TYPES, ["计算机科学", "人工智能", "数学", "生物学", "医学", "经济学", "其他"]);
   assert.equal(normalizeProjectType("计算机科学"), "计算机科学");
+  assert.equal(normalizeProjectType(" 人工智能 "), "人工智能");
   assert.equal(normalizeProjectType("  数学  "), "数学");
   assert.equal(normalizeProjectType("天文学"), "其他");
   assert.equal(normalizeProjectType(""), "其他");
@@ -217,9 +241,14 @@ test("更改项目类别保留其他项目并归一未知值，不修改原映�
 
 test("研究问题表单按学科给出不同设计提示，未知类别回退到通用方案", () => {
   const cs = buildQuestionFormProfile("计算机科学");
+  const ai = buildQuestionFormProfile("人工智能");
   const medicine = buildQuestionFormProfile("医学");
   const other = buildQuestionFormProfile("未知学科");
   assert.equal(cs.targetScopeLabel, "目标学习率");
+  assert.equal(ai.type, "人工智能");
+  assert.equal(ai.guideTitle, "模型实验设计");
+  assert.match(ai.checklist.join("；"), /数据泄漏/);
+  assert.match(ai.boundary, /统计显著性/);
   assert.equal(medicine.guideTitle, "临床研究设计");
   assert.match(medicine.guideIntro, /研究对象/);
   assert.match(medicine.boundary, /不把模型准确率直接当作临床疗效|当前矩阵仅支持/);

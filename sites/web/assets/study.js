@@ -18,6 +18,7 @@ import {
   evaluateEntryMissing,
   extractPaperTitle,
   filterProjects,
+  filterProjectsByType,
   formatAccuracy,
   formatUpdatedAt,
   highlightMatches,
@@ -683,6 +684,7 @@ const ICON_FOLDER = '<svg class="side-icon" viewBox="0 0 24 24" fill="none" stro
 const ICON_FILE = '<svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
 const ICON_SLIDERS = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>';
 const ICON_SEARCH = '<svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+const ICON_CRYSTAL = '<svg class="category-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 7 6-7 14L5 8z"/><path d="m5 8 7 3 7-3M12 2v9"/></svg>';
 const ICON_PREV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
 const ICON_NEXT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
 const ICON_PANEL_CLOSE = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 9-3 3 3 3"/></svg>';
@@ -778,6 +780,34 @@ async function renderProjects() {
     role: "group",
     "aria-label": "项目搜索与工作台操作",
   }, searchBox, actionGroup);
+  let activeProjectType = "";
+  const categoryButtons = ["全部", ...PROJECT_TYPES].map((type) => {
+    const value = type === "全部" ? "" : type;
+    const button = h("button", {
+      class: "category-chip",
+      type: "button",
+      text: type,
+      dataset: { projectType: value },
+      "aria-pressed": String(value === activeProjectType),
+      "aria-controls": "projectGridHost",
+    });
+    button.addEventListener("click", () => {
+      activeProjectType = value;
+      for (const item of categoryButtons) item.setAttribute("aria-pressed", String(item === button));
+      updateGrid();
+    });
+    return button;
+  });
+  const categories = h("div", {
+    class: "workbench-categories",
+    id: "projectCategories",
+    role: "group",
+    "aria-label": "按研究领域筛选项目",
+  },
+    h("span", { class: "workbench-categories-label" }, icon(ICON_CRYSTAL), h("span", { text: "研究领域" })),
+    h("div", { class: "workbench-category-list" }, ...categoryButtons),
+  );
+  const controls = h("div", { class: "workbench-controls" }, tools, categories);
   const kpiRow = h("div", { class: "stat-row", id: "kpiRow", "aria-label": "工作台统计" });
   const head = h("header", { class: "workbench-head" },
     h("div", { class: "workbench-title" },
@@ -786,7 +816,7 @@ async function renderProjects() {
       h("p", { class: "lede", text: "把论文读成可检验的主张：每条结论，都要有对照证据。" }),
       kpiRow,
     ),
-    tools,
+    controls,
   );
   const sectionTitle = h("h2", { class: "section-title", id: "recentTitle", text: "最近更新", hidden: true });
   const listToolbar = h("div", { class: "workbench-list-head", id: "listToolbar" },
@@ -925,11 +955,13 @@ async function renderProjects() {
 
   async function updateGrid() {
     const query = searchInput.value;
-    const list = sortProjects(filterProjects(allProjects, query), pinnedIds);
+    const searched = filterProjects(allProjects, query);
+    const list = sortProjects(filterProjectsByType(searched, loadProjectTypes(), activeProjectType), pinnedIds);
     clear(gridHost);
     clear(emptyHost);
     renderKpis();
     searchBox.hidden = allProjects.length === 0;
+    categories.hidden = allProjects.length === 0;
     listToolbar.hidden = allProjects.length === 0;
     sectionTitle.hidden = allProjects.length === 0;
     document.getElementById("projectCount").textContent =

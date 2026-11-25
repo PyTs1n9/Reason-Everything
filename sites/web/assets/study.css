@@ -1866,10 +1866,15 @@ h1 .project-title-input[aria-invalid="true"] {
   padding: 2px 8px;
 }
 
-/* 类型多彩色板（六类型固定色） */
+/* 类型多彩色板（七类型固定色） */
 .card-tag.type-cs {
   color: #2c5f9e;
   background: #e3edf8;
+}
+
+.card-tag.type-ai {
+  color: #8a4b93;
+  background: #f2e6f6;
 }
 
 .card-tag.type-math {
@@ -3451,6 +3456,7 @@ h1 .project-title-input[aria-invalid="true"] {
 }
 
 .card-tag.type-cs { --tag-dot: #3f6f9e; background: transparent; color: var(--meta-ink); }
+.card-tag.type-ai { --tag-dot: #b47ac4; background: transparent; color: var(--meta-ink); }
 .card-tag.type-math { --tag-dot: #7a5aa6; background: transparent; color: var(--meta-ink); }
 .card-tag.type-bio { --tag-dot: #3f7d54; background: transparent; color: var(--meta-ink); }
 .card-tag.type-med { --tag-dot: #a8642f; background: transparent; color: var(--meta-ink); }
@@ -3950,6 +3956,7 @@ h1 .project-title-input[aria-invalid="true"] {
   }
 
   .card-tag.type-cs { --tag-dot: #7fa8d8; }
+  .card-tag.type-ai { --tag-dot: #dca0e4; }
   .card-tag.type-math { --tag-dot: #b79ce0; }
   .card-tag.type-bio { --tag-dot: #7cc79a; }
   .card-tag.type-med { --tag-dot: #d9a070; }
@@ -5597,6 +5604,17 @@ body.sidebar-resizing * {
   border-bottom: 0;
 }
 
+.workbench-controls {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
 .workbench-tools {
   position: relative;
   isolation: isolate;
@@ -5650,6 +5668,111 @@ body.sidebar-resizing * {
 .workbench-tools > * {
   position: relative;
   z-index: 1;
+}
+
+.workbench-categories {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background:
+    radial-gradient(90% 140% at 0% 0%, var(--glass-glint), transparent 52%),
+    linear-gradient(135deg, var(--glass-bg-strong), var(--glass-bg));
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 color-mix(in srgb, var(--glass-highlight) 35%, transparent),
+    0 8px 20px var(--glass-shadow);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+}
+
+.workbench-categories::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: 0;
+  border-radius: 12px;
+  background: linear-gradient(115deg, transparent 16%, var(--glass-glint) 46%, transparent 64%);
+  opacity: 0.42;
+  pointer-events: none;
+  user-select: none;
+}
+
+.workbench-categories > * {
+  position: relative;
+  z-index: 1;
+}
+
+.workbench-categories[hidden] {
+  display: none;
+}
+
+.workbench-categories-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workbench-categories-label .icon-box,
+.workbench-categories-label .category-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--brand);
+}
+
+.workbench-category-list {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.category-chip {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--ink-2);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.category-chip:hover {
+  color: var(--ink);
+  background: var(--glass-control-hover);
+  border-color: var(--glass-line);
+}
+
+.category-chip[aria-pressed="true"] {
+  color: var(--brand-ink);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 88%, var(--surface)), var(--brand));
+  border-color: color-mix(in srgb, var(--brand) 72%, var(--line-strong));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 5px 12px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.category-chip:focus-visible {
+  outline: none;
+  border-color: var(--glass-line-strong);
+  box-shadow: 0 0 0 3px var(--glass-focus);
 }
 
 .workbench-tools .workbench-search {
@@ -5780,8 +5903,18 @@ body.sidebar-resizing * {
     gap: 18px;
   }
 
+  .workbench-controls {
+    width: 100%;
+    align-items: stretch;
+  }
+
   .workbench-tools {
     width: 100%;
+  }
+
+  .workbench-categories,
+  .workbench-category-list {
+    justify-content: flex-start;
   }
 
   .workbench-tools .workbench-search {
@@ -5832,6 +5965,21 @@ body.sidebar-resizing * {
     font-size: 12px;
   }
 
+  .workbench-controls {
+    gap: 8px;
+  }
+
+  .workbench-categories {
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .category-chip {
+    min-height: 44px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
   .workbench-list-head {
     margin-top: -4px;
   }
@@ -5851,7 +5999,8 @@ body.sidebar-resizing * {
 
 @media (prefers-reduced-motion: reduce) {
   .workbench-tools::before,
-  .workbench-tools .head-actions .btn {
+  .workbench-tools .head-actions .btn,
+  .category-chip {
     transition: none;
   }
 
@@ -5870,16 +6019,26 @@ body.sidebar-resizing * {
   }
 
   .workbench-tools::before,
-  .workbench-tools::after {
+  .workbench-tools::after,
+  .workbench-categories::before {
     display: none;
   }
 
+  .workbench-categories {
+    background: var(--surface);
+    box-shadow: inset 0 1px 0 var(--glass-highlight);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
   .workbench-tools .search-box input[type="search"],
-  .workbench-tools .head-actions .btn {
+  .workbench-tools .head-actions .btn,
+  .category-chip {
     background: var(--surface-2);
   }
 
-  .workbench-tools .head-actions .btn-primary {
+  .workbench-tools .head-actions .btn-primary,
+  .category-chip[aria-pressed="true"] {
     background: var(--brand);
   }
 }
@@ -5892,12 +6051,25 @@ body.sidebar-resizing * {
   }
 
   .workbench-tools::before,
-  .workbench-tools::after {
+  .workbench-tools::after,
+  .workbench-categories::before {
     display: none;
   }
 
-  .workbench-tools .head-actions .btn {
+  .workbench-categories {
     border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .workbench-tools .head-actions .btn,
+  .category-chip {
+    border-color: CanvasText;
+  }
+
+  .category-chip[aria-pressed="true"] {
+    color: HighlightText;
+    background: Highlight;
   }
 }
 

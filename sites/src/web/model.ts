@@ -13,10 +13,21 @@ export function filterProjects(list: readonly ProjectSummary[], query: string): 
   return list.filter((p) => p.name.toLowerCase().includes(q));
 }
 
+/** 按研究领域筛选；空领域表示全部，缺少类型映射的项目不会被归入其他领域。 */
+export function filterProjectsByType(
+  list: readonly ProjectSummary[],
+  types: Readonly<Record<string, string>>,
+  selectedType: string,
+): ProjectSummary[] {
+  const selected = selectedType.trim();
+  if (!selected) return [...list];
+  return list.filter((project) => types[project.projectId] === selected);
+}
+
 // ---------- 项目类型标签（卡 13；Project 存储契约冻结，标签仅存浏览器本机） ----------
 
 /** 新建项目可选类型字典（界面固定选项，不进存储契约）。 */
-export const PROJECT_TYPES = ["计算机科学", "数学", "生物学", "医学", "经济学", "其他"] as const;
+export const PROJECT_TYPES = ["计算机科学", "人工智能", "数学", "生物学", "医学", "经济学", "其他"] as const;
 
 /** 规范化类型：去空格后不在字典内（含空串）一律归「其他」。 */
 export function normalizeProjectType(raw: string): string {
@@ -81,6 +92,20 @@ const QUESTION_FORM_PROFILES: Record<string, QuestionFormProfile> = {
     bothScopeLabel: "两档都验证",
     targetScopeHint: "只检查目标运行所在学习率的一档对照。",
     bothScopeHint: "对数据中的两档学习率逐档检查，不合并结论。",
+    targetConditionLabel: "目标学习率（数据中的取值）",
+  },
+  人工智能: {
+    type: "人工智能",
+    guideTitle: "模型实验设计",
+    guideIntro: "先固定数据划分、模型与评测口径，再判断数据增强是否带来可复现的提升。",
+    checklist: ["隔离训练、验证与测试集，避免数据泄漏", "固定模型、评测集与随机种子", "基线只改变增强开关并确认学习率一致"],
+    boundary: "当前分析器比较增强开关与准确率；单次结果不代表统计显著性，跨数据集结论需分别验证。",
+    claimPlaceholder: "例如：在 ResNet18 与 CIFAR-10 上，数据增强使测试集准确率提高了 2 个百分点",
+    scopeTitle: "模型验证范围",
+    targetScopeLabel: "目标学习率",
+    bothScopeLabel: "两档都验证",
+    targetScopeHint: "只检查目标运行所在学习率的一档对照。",
+    bothScopeHint: "对数据中的两档学习率逐档检查，不合并不同学习率的结论。",
     targetConditionLabel: "目标学习率（数据中的取值）",
   },
   数学: {
@@ -224,11 +249,13 @@ export function sortProjects(
   ];
 }
 
-/** 项目类型 → 色板 class 后缀（六类型固定色；字典外随 normalizeProjectType 归「其他」）。 */
+/** 项目类型 → 色板 class 后缀（字典外随 normalizeProjectType 归「其他」）。 */
 export function typeColorClass(type: string): string {
   switch (normalizeProjectType(type)) {
     case "计算机科学":
       return "type-cs";
+    case "人工智能":
+      return "type-ai";
     case "数学":
       return "type-math";
     case "生物学":
