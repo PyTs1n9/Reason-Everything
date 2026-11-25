@@ -404,6 +404,7 @@ let currentProjectId = null;
 
 async function render() {
   const route = parseRoute();
+  document.body.dataset.view = route.view;
   topbarBack.hidden = route.view !== "project";
   closeNav();
   closeSaveModePop();

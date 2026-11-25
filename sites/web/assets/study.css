@@ -6616,3 +6616,719 @@ body:has(.workbench-head) {
     -webkit-backdrop-filter: none;
   }
 }
+
+/* 全站水晶墨绿森林主题 */
+body.crystal-forest {
+  --bg-app: #e8f0e9;
+  --bg: #dde9e0;
+  --surface: rgba(249, 253, 250, 0.88);
+  --surface-2: rgba(239, 247, 241, 0.78);
+  --sheet: rgba(251, 254, 252, 0.94);
+  --ink: #183226;
+  --ink-2: #476253;
+  --meta-ink: #6b8172;
+  --line: rgba(37, 77, 56, 0.15);
+  --line-strong: rgba(37, 77, 56, 0.3);
+  --brand: #2f7353;
+  --brand-deep: #245b41;
+  --brand-ink: #f6fff8;
+  --brand-soft: rgba(61, 124, 86, 0.12);
+  --danger: #a64335;
+  --danger-deep: #843326;
+  --amber: #8a6427;
+  --amber-line: rgba(154, 113, 43, 0.52);
+  --measured-bg: rgba(61, 124, 86, 0.12);
+  --tag-bg: rgba(37, 77, 56, 0.08);
+  --overlay: rgba(12, 29, 20, 0.42);
+  --shadow: rgba(25, 55, 38, 0.18);
+  --shadow-soft: rgba(25, 55, 38, 0.09);
+  --hero-from: #245b41;
+  --hero-to: #3d8060;
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --glass-bg: rgba(247, 252, 248, 0.68);
+  --glass-bg-strong: rgba(250, 254, 251, 0.9);
+  --glass-control: rgba(255, 255, 255, 0.46);
+  --glass-control-hover: rgba(255, 255, 255, 0.72);
+  --glass-line: rgba(47, 115, 83, 0.18);
+  --glass-line-strong: rgba(47, 115, 83, 0.4);
+  --glass-highlight: rgba(255, 255, 255, 0.78);
+  --glass-glint: rgba(126, 196, 155, 0.18);
+  --glass-shadow: rgba(25, 55, 38, 0.14);
+  --glass-focus: rgba(47, 115, 83, 0.16);
+  --forest-bg-deep: #d7e5db;
+  --forest-control: rgba(255, 255, 255, 0.48);
+  --forest-control-hover: rgba(255, 255, 255, 0.76);
+  --forest-aurora: rgba(126, 196, 155, 0.2);
+  --forest-lilac: rgba(183, 166, 232, 0.12);
+  --forest-champagne: rgba(222, 201, 151, 0.12);
+  --crystal-blur: blur(18px) saturate(138%);
+  --crystal-radius: 18px;
+  --crystal-surface-bg:
+    radial-gradient(110% 140% at 0% 0%, var(--forest-aurora), transparent 48%),
+    radial-gradient(90% 120% at 100% 0%, var(--forest-lilac), transparent 46%),
+    linear-gradient(135deg, var(--glass-bg-strong), var(--glass-bg));
+  --crystal-control-bg: linear-gradient(135deg, var(--forest-control-hover), var(--forest-control));
+  color: var(--ink);
+  color-scheme: light;
+  background:
+    radial-gradient(ellipse at 8% 0%, var(--forest-aurora), transparent 34%),
+    radial-gradient(ellipse at 92% 16%, var(--forest-lilac), transparent 30%),
+    radial-gradient(ellipse at 50% 100%, var(--forest-champagne), transparent 38%),
+    var(--bg-app);
+}
+
+@media (prefers-color-scheme: dark) {
+  body.crystal-forest {
+    --bg-app: #07150f;
+    --bg: #0d2117;
+    --surface: rgba(13, 34, 24, 0.86);
+    --surface-2: rgba(20, 45, 32, 0.82);
+    --sheet: rgba(17, 39, 28, 0.94);
+    --ink: #e9f4ed;
+    --ink-2: #b5cbbc;
+    --meta-ink: #8ba695;
+    --line: rgba(166, 216, 187, 0.15);
+    --line-strong: rgba(166, 216, 187, 0.28);
+    --brand: #8bd3aa;
+    --brand-deep: #a7e4bf;
+    --brand-ink: #0a1c12;
+    --brand-soft: rgba(117, 192, 148, 0.12);
+    --danger: #ef9b8e;
+    --danger-deep: #ffc0b5;
+    --amber: #d9b974;
+    --amber-line: rgba(217, 185, 116, 0.5);
+    --measured-bg: rgba(117, 192, 148, 0.13);
+    --tag-bg: rgba(166, 216, 187, 0.08);
+    --overlay: rgba(2, 10, 6, 0.66);
+    --shadow: rgba(0, 0, 0, 0.4);
+    --shadow-soft: rgba(0, 0, 0, 0.24);
+    --hero-from: #235f42;
+    --hero-to: #347c57;
+    --glass-bg: rgba(13, 32, 22, 0.72);
+    --glass-bg-strong: rgba(18, 43, 30, 0.92);
+    --glass-control: rgba(182, 225, 199, 0.055);
+    --glass-control-hover: rgba(182, 225, 199, 0.1);
+    --glass-line: rgba(166, 216, 187, 0.17);
+    --glass-line-strong: rgba(154, 217, 179, 0.42);
+    --glass-highlight: rgba(226, 255, 236, 0.16);
+    --glass-glint: rgba(151, 226, 184, 0.14);
+    --glass-shadow: rgba(0, 0, 0, 0.34);
+    --glass-focus: rgba(138, 199, 166, 0.18);
+    --forest-bg-deep: #091a11;
+    --forest-control: rgba(182, 225, 199, 0.055);
+    --forest-control-hover: rgba(182, 225, 199, 0.1);
+    --forest-aurora: rgba(119, 207, 157, 0.16);
+    --forest-lilac: rgba(157, 135, 214, 0.11);
+    --forest-champagne: rgba(201, 176, 119, 0.08);
+    color-scheme: dark;
+  }
+}
+
+.crystal-forest .topbar {
+  height: 56px;
+  background: var(--crystal-surface-bg);
+  border-bottom-color: var(--glass-line);
+  box-shadow: inset 0 -1px 0 var(--glass-highlight), 0 8px 28px var(--glass-shadow);
+  backdrop-filter: var(--crystal-blur);
+  -webkit-backdrop-filter: var(--crystal-blur);
+}
+
+.crystal-forest .nav-btn,
+.crystal-forest .save-mode-pop,
+.crystal-forest .local-library-form {
+  background: var(--glass-bg-strong);
+  border-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 12px 32px var(--glass-shadow);
+  backdrop-filter: var(--crystal-blur);
+  -webkit-backdrop-filter: var(--crystal-blur);
+}
+
+.crystal-forest .sidebar {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-soft) 46%, var(--bg)), var(--bg) 52%);
+}
+
+.crystal-forest .side-link[aria-current="page"] {
+  background: var(--crystal-control-bg);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: url("./forest-project-backdrop.webp") center / cover no-repeat;
+  opacity: 0;
+  mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.1) 12%, #000 34%, #000 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.1) 12%, #000 34%, #000 82%, transparent 100%);
+  pointer-events: none;
+}
+
+.crystal-forest[data-view]:not([data-view="projects"]) .shell::before {
+  opacity: 0.28;
+}
+
+.crystal-forest[data-view="projects"]:has(.project-grid) .shell::before {
+  opacity: 0.46;
+}
+
+.crystal-forest .shell > .content {
+  position: relative;
+  z-index: 1;
+}
+
+@media (min-width: 1200px) {
+  .crystal-forest[data-view]:not([data-view="projects"]) .shell > .sidebar {
+    z-index: 2;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 94%, transparent), color-mix(in srgb, var(--bg) 82%, transparent) 70%, transparent);
+  }
+
+  .crystal-forest[data-view]:not([data-view="projects"]) .shell > .content {
+    padding-left: 72px;
+  }
+}
+
+@media (max-width: 767px) {
+  .crystal-forest[data-view]:not([data-view="projects"]) .shell::before {
+    background-size: 100% auto;
+    background-position: center bottom;
+    opacity: 0.18;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .crystal-forest[data-view]:not([data-view="projects"]) .shell::before {
+    opacity: 0.12;
+  }
+
+  .crystal-forest[data-view="projects"]:has(.project-grid) .shell::before {
+    opacity: 0.14;
+  }
+}
+
+.crystal-forest :is(
+  .form-section,
+  .model-card,
+  .model-add-panel,
+  .paper-library,
+  .reader,
+  .evidence-rail,
+  .panel,
+  .paper-compare-panel,
+  .paper-evidence-card,
+  .research-card,
+  .research-result,
+  .q-header
+) {
+  background: var(--crystal-surface-bg);
+  border-color: var(--glass-line);
+  border-radius: var(--crystal-radius);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 18px 44px var(--glass-shadow);
+  backdrop-filter: var(--crystal-blur);
+  -webkit-backdrop-filter: var(--crystal-blur);
+}
+
+.crystal-forest :is(
+  .type-guide,
+  .notice,
+  .rule-block,
+  .evidence-detail,
+  .paper-clue,
+  .paper-compare-column,
+  .paper-evidence-source,
+  .suggestion-card,
+  .ocr-panel,
+  .research-origin,
+  .raw-row,
+  .empty:not(.empty--start),
+  .version-item,
+  .evidence-item
+) {
+  background: var(--crystal-control-bg);
+  border-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .q-header {
+  padding: 20px 22px;
+}
+
+.crystal-forest .entry-form {
+  width: 100%;
+  max-width: 920px;
+}
+
+.crystal-forest .form-section-title {
+  color: var(--ink);
+}
+
+.crystal-forest .scope-choice {
+  background: var(--crystal-control-bg);
+  border-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .scope-choice:has(input:checked) {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.crystal-forest input[type="text"],
+.crystal-forest input[type="search"],
+.crystal-forest input[type="number"],
+.crystal-forest input[type="url"],
+.crystal-forest input[type="password"],
+.crystal-forest textarea,
+.crystal-forest select {
+  color: var(--ink);
+  background-color: var(--forest-control);
+  border-color: var(--glass-line-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest input::placeholder,
+.crystal-forest textarea::placeholder {
+  color: var(--meta-ink);
+  opacity: 0.82;
+}
+
+.crystal-forest input[type="text"]:focus-visible,
+.crystal-forest input[type="search"]:focus-visible,
+.crystal-forest input[type="number"]:focus-visible,
+.crystal-forest input[type="url"]:focus-visible,
+.crystal-forest input[type="password"]:focus-visible,
+.crystal-forest textarea:focus-visible,
+.crystal-forest select:focus-visible {
+  border-color: var(--brand);
+  background-color: var(--glass-bg-strong);
+  box-shadow: 0 0 0 3px var(--glass-focus), inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .btn:not(.btn-primary):not(.btn-danger) {
+  background: var(--crystal-control-bg);
+  border-color: var(--glass-line-strong);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .btn:not(.btn-primary):not(.btn-danger):hover:not(:disabled) {
+  background: var(--forest-control-hover);
+  border-color: var(--brand);
+}
+
+.crystal-forest .btn-primary {
+  background: linear-gradient(135deg, var(--brand-deep), var(--brand));
+  border-color: var(--brand);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 8px 20px var(--glass-shadow);
+}
+
+.crystal-forest .btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  border-color: var(--brand-deep);
+}
+
+.crystal-forest .btn-danger {
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.crystal-forest .btn-quiet {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.crystal-forest .model-card-toggle:hover,
+.crystal-forest .paper-tab:hover,
+.crystal-forest .paper-tab.is-active {
+  background: var(--brand-soft);
+  border-color: var(--glass-line-strong);
+}
+
+.crystal-forest .paper-tab.is-active {
+  border-color: var(--brand);
+}
+
+.crystal-forest .paper-tab.is-active strong,
+.crystal-forest .paper-tab.is-active .paper-tab-state {
+  color: var(--brand);
+}
+
+.crystal-forest .model-details {
+  background: color-mix(in srgb, var(--glass-control) 70%, transparent);
+  border-top-color: var(--glass-line);
+}
+
+.crystal-forest .model-option,
+.crystal-forest .cell-btn,
+.crystal-forest .research-source-option {
+  background: var(--crystal-control-bg);
+  border-color: var(--glass-line);
+}
+
+.crystal-forest .model-option:hover,
+.crystal-forest .model-option.is-selected,
+.crystal-forest .research-source-option:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.crystal-forest .data-table th,
+.crystal-forest .matrix thead th {
+  color: var(--meta-ink);
+  background: color-mix(in srgb, var(--glass-control) 72%, transparent);
+  border-color: var(--glass-line);
+}
+
+.crystal-forest .data-table td,
+.crystal-forest .matrix th,
+.crystal-forest .matrix td {
+  border-color: var(--glass-line);
+}
+
+.crystal-forest .data-table tbody tr:hover {
+  background: var(--brand-soft);
+}
+
+.crystal-forest .matrix td.state-measured {
+  background: var(--measured-bg);
+  border-color: var(--brand);
+}
+
+.crystal-forest .matrix td.state-suggested,
+.crystal-forest .matrix td.state-empty {
+  background: color-mix(in srgb, var(--glass-control) 72%, transparent);
+}
+
+.crystal-forest .reader-head {
+  background: color-mix(in srgb, var(--glass-control) 62%, transparent);
+  border-bottom-color: var(--glass-line);
+}
+
+.crystal-forest .reader-bar {
+  background: var(--crystal-control-bg);
+  border-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .reader-mode.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-ink);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .rail-head,
+.crystal-forest .candidate {
+  border-color: var(--glass-line);
+}
+
+.crystal-forest .rail-count,
+.crystal-forest .research-badge {
+  border-color: var(--glass-line-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .paper-sheet.is-text {
+  background: var(--sheet);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.crystal-forest .paper-sheet.is-original {
+  background: var(--forest-bg-deep);
+}
+
+.crystal-forest .pdf-stage--embedded {
+  background:
+    radial-gradient(ellipse at 50% 0%, var(--forest-aurora), transparent 58%),
+    var(--forest-bg-deep);
+}
+
+.crystal-forest .reader-pdf-page {
+  box-shadow: 0 12px 34px var(--glass-shadow), 0 0 0 1px var(--glass-line);
+}
+
+.crystal-forest .modal-overlay,
+.crystal-forest .drawer-overlay {
+  background: var(--overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.crystal-forest .modal,
+.crystal-forest .drawer {
+  background: var(--crystal-surface-bg);
+  border: 1px solid var(--glass-line-strong);
+  border-radius: 20px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 24px 70px var(--shadow);
+  backdrop-filter: var(--crystal-blur);
+  -webkit-backdrop-filter: var(--crystal-blur);
+}
+
+.crystal-forest .toast:not(.toast-ok):not(.toast-bad) {
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-line-strong);
+  border-radius: 12px;
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 14px 34px var(--shadow);
+  backdrop-filter: var(--crystal-blur);
+  -webkit-backdrop-filter: var(--crystal-blur);
+}
+
+@media (max-width: 767px) {
+  .crystal-forest :is(
+    .form-section,
+    .model-card,
+    .model-add-panel,
+    .paper-library,
+    .reader,
+    .evidence-rail,
+    .panel,
+    .paper-compare-panel,
+    .paper-evidence-card,
+    .research-card,
+    .research-result,
+    .q-header
+  ) {
+    border-radius: 14px;
+  }
+
+  .crystal-forest .form-section,
+  .crystal-forest .evidence-rail,
+  .crystal-forest .q-header {
+    padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crystal-forest .btn,
+  .crystal-forest .paper-tab,
+  .crystal-forest .model-card-toggle,
+  .crystal-forest .data-table tbody tr {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .crystal-forest :is(
+    .form-section,
+    .model-card,
+    .model-add-panel,
+    .paper-library,
+    .reader,
+    .evidence-rail,
+    .panel,
+    .paper-compare-panel,
+    .paper-evidence-card,
+    .research-card,
+    .research-result,
+    .q-header,
+    .type-guide,
+    .notice,
+    .rule-block,
+    .evidence-detail,
+    .paper-clue,
+    .paper-compare-column,
+    .paper-evidence-source,
+    .suggestion-card,
+    .ocr-panel,
+    .research-origin,
+    .raw-row,
+    .empty:not(.empty--start),
+    .version-item,
+    .evidence-item,
+    .modal,
+    .drawer,
+    .save-mode-pop,
+    .local-library-form,
+    .toast:not(.toast-ok):not(.toast-bad)
+  ),
+  .crystal-forest .topbar,
+  .crystal-forest .reader-head,
+  .crystal-forest .reader-bar,
+  .crystal-forest .model-details {
+    background: var(--surface);
+    box-shadow: inset 0 1px 0 var(--glass-highlight);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .crystal-forest input[type="text"],
+  .crystal-forest input[type="search"],
+  .crystal-forest input[type="number"],
+  .crystal-forest input[type="url"],
+  .crystal-forest input[type="password"],
+  .crystal-forest textarea,
+  .crystal-forest select,
+  .crystal-forest .btn:not(.btn-primary):not(.btn-danger),
+  .crystal-forest .scope-choice,
+  .crystal-forest .model-option,
+  .crystal-forest .paper-tab {
+    background: var(--surface-2);
+    box-shadow: none;
+  }
+
+  .crystal-forest .btn-primary,
+  .crystal-forest .reader-mode.is-active {
+    background: var(--brand);
+    box-shadow: none;
+  }
+
+  .crystal-forest .modal-overlay,
+  .crystal-forest .drawer-overlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .crystal-forest .shell::before {
+    display: none;
+  }
+
+  .crystal-forest .sidebar {
+    background: var(--bg);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .crystal-forest :is(
+    .form-section,
+    .model-card,
+    .model-add-panel,
+    .paper-library,
+    .reader,
+    .evidence-rail,
+    .panel,
+    .paper-compare-panel,
+    .paper-evidence-card,
+    .research-card,
+    .research-result,
+    .q-header,
+    .type-guide,
+    .notice,
+    .rule-block,
+    .evidence-detail,
+    .paper-clue,
+    .paper-compare-column,
+    .paper-evidence-source,
+    .suggestion-card,
+    .ocr-panel,
+    .research-origin,
+    .raw-row,
+    .modal,
+    .drawer
+  ) {
+    background: var(--surface);
+    border-color: var(--line-strong);
+    box-shadow: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .crystal-forest :is(
+    .form-section,
+    .model-card,
+    .model-add-panel,
+    .paper-library,
+    .reader,
+    .evidence-rail,
+    .panel,
+    .paper-compare-panel,
+    .paper-evidence-card,
+    .research-card,
+    .research-result,
+    .q-header,
+    .type-guide,
+    .notice,
+    .rule-block,
+    .evidence-detail,
+    .paper-clue,
+    .paper-compare-column,
+    .paper-evidence-source,
+    .suggestion-card,
+    .ocr-panel,
+    .research-origin,
+    .raw-row,
+    .modal,
+    .drawer,
+    .toast:not(.toast-ok):not(.toast-bad)
+  ),
+  .crystal-forest .topbar,
+  .crystal-forest .reader-head,
+  .crystal-forest .reader-bar,
+  .crystal-forest .model-details {
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .crystal-forest .shell::before,
+  body.crystal-forest::before,
+  body.crystal-forest::after {
+    display: none;
+  }
+
+  .crystal-forest .sidebar {
+    background: Canvas;
+  }
+}
+
+@media print {
+  body.crystal-forest {
+    background: #fff;
+    color: #111;
+  }
+
+  .crystal-forest .shell::before,
+  body.crystal-forest::before,
+  body.crystal-forest::after {
+    display: none;
+  }
+
+  .crystal-forest :is(
+    .form-section,
+    .model-card,
+    .model-add-panel,
+    .paper-library,
+    .reader,
+    .evidence-rail,
+    .panel,
+    .paper-compare-panel,
+    .paper-evidence-card,
+    .research-card,
+    .research-result,
+    .q-header,
+    .type-guide,
+    .notice,
+    .rule-block,
+    .evidence-detail,
+    .paper-clue,
+    .paper-compare-column,
+    .paper-evidence-source,
+    .suggestion-card,
+    .ocr-panel,
+    .research-origin,
+    .raw-row,
+    .modal,
+    .drawer
+  ),
+  .crystal-forest .topbar,
+  .crystal-forest .reader-head,
+  .crystal-forest .reader-bar,
+  .crystal-forest .model-details {
+    background: #fff;
+    border-color: #bbb;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .crystal-forest .sidebar {
+    background: #fff;
+  }
+}
