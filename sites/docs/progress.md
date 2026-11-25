@@ -430,3 +430,11 @@
 - **离线测试**：`web-paper-compare.test.ts` 新增反向断言，覆盖预览/复制入口与 CSS 残留、解析摘要字段、导入接线和逐页文字读取；定向新增用例 **1/1 pass、exit 0**。HEAD + 本卡补丁的隔离快照完整 `npm test` = **311/311 pass、fail 0、exit 0**；`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、卡范围 `git diff --check` 均 exit 0。
 - **浏览器实测（隔离快照 127.0.0.1:8328，真实 IndexedDB + PDF.js + Headless Chrome 1440×1000）**：导入有效两页 PDF 后弹窗显示 2 页、待 OCR 0 页、272 字符与正确 SHA-256 缩写，`.import-preview` 和 `#importCopyText` 均为 0；题名自动回填，创建项目后原版画布可用，切「文字重排」可读第一页，下一页导航到第 2 页且路由携带文献指纹。截图已目视核对，无头验收命令 exit 0；临时项目、PDF、浏览器配置、截图与服务均已清理。
 - **未测/受限**：交互使用 CDP 自动化事件，未声称物理键鼠验收；真实模型未测，`tsc` 未跑（依赖冻结）。当前混合工作区 `npm test` = **334/336 pass、exit 1**，两项分别为并行未提交的 `web-paper-compare` 证据路由旧正则与 `web-ux` 主题左侧强调条断言，均不纳入本卡。**本次没做**：未改 PDF 解析/阅读器、业务 schema、模型服务、依赖、发布、站点访问范围或其他并行未提交成果。
+
+## 卡 30 · 侧栏枝叶贴图替换与水印清理（2026-11-25）
+
+- **交付**：将用户提供的长枝叶图去除右下角「豆包AI生成」水印，按白底抠透明、清除背景杂点、保留完整枝叶后生成 `web/assets/sidebar-branch-v2.png`（337×2048 RGBA，634956 字节）；`web/index.html` 的侧栏拖动条改用该素材，原树木 PNG 不再请求。拖动、键盘、持久化、落叶、桌面收起与窄屏抽屉逻辑均未改动。
+- **离线测试**：更新 `tests/web-sidebar.test.ts` 的素材路径与正式 PNG 校验，继续核对尺寸、透明通道、四边透明和右下角无水印。`node --test tests/web-sidebar.test.ts tests/web-sidebar-forest.test.ts` = **15/15 pass、exit 0**；只含本卡改动的隔离快照 `npm test` = **311/311 pass、exit 0**，`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js` 与 `git diff --check` 均 exit 0。
+- **浏览器实测（127.0.0.1:8374，Headless Chrome + CDP）**：1440×900 下新素材加载成功、自然尺寸 337×2048、显示区域 144×876px、命中区 136×844px，旧素材零请求；CDP 实际拖动 248→308px 并生成 2 片落叶，ArrowRight/Home/End 分别到 324/208/420px。390×844 下把手隐藏、研究库按钮 44×44px、抽屉 260px、Escape 关闭并回焦；两档横向溢出均为 0，Runtime 异常与 error 日志为 0，桌面和手机截图已目视核对。
+- **当前混合工作区**：`npm test` = **337/338 pass、exit 1**；唯一失败为前序未提交本地知识库改动造成的 `web-paper-compare` 旧断言漂移，不属于本卡范围，未越界修改。隔离快照不受该并行改动影响。
+- **未测/受限**：CDP 输入为自动化浏览器事件，未声称物理鼠标验收；真实模型与云存储未测，`tsc` 未跑（依赖冻结）。**本次没做**：未改业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果。
