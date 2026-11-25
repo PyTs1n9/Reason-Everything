@@ -3104,9 +3104,10 @@ h1 .project-title-input[aria-invalid="true"] {
 }
 
 .sidebar-resizer {
-  position: absolute;
-  top: 0;
-  right: -6px;
+  position: fixed;
+  top: 56px;
+  left: calc(var(--sidebar-width) - 6px);
+  right: auto;
   height: calc(100vh - 56px);
   height: calc(100dvh - 56px);
   z-index: 5;
@@ -3155,7 +3156,8 @@ h1 .project-title-input[aria-invalid="true"] {
 }
 
 .shell.sidebar-tree-ready .sidebar-resizer {
-  right: -64px;
+  left: calc(var(--sidebar-width) - 72px);
+  right: auto;
   width: 136px;
 }
 

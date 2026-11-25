@@ -61,7 +61,8 @@ test("树木与命中区右移到分界，卡片保留点击间隙", () => {
   const tree = ruleBody(".shell.sidebar-tree-ready .sidebar-tree-image");
   const hitWidth = Number(resizer.match(/width:\s*(\d+)px/)?.[1]);
   const treeWidth = Number(ruleBody(".sidebar-tree-image").match(/width:\s*(\d+)px/)?.[1]);
-  assert.match(resizer, /right:\s*-64px/);
+  assert.match(resizer, /left:\s*calc\(var\(--sidebar-width\) - 72px\)/);
+  assert.match(resizer, /right:\s*auto/);
   assert.equal(hitWidth, 136);
   assert.equal(treeWidth, 144);
   assert.match(tree, /right:\s*-4px/);

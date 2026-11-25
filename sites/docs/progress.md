@@ -330,3 +330,10 @@
 - **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，临时三页 PDF 与 IndexedDB 演示项目）**：修复前原版/文字重排把手分别为 1485.27/1314.39px，原版连续拖动出现 11 种高度；修复后两模式把手均为 844px、树木均为 876px，原版 147 帧与文字重排 146 帧采样高度均无变化。宽度拖动 208→268px 后持久化并清理拖动状态；ArrowRight、End、Home、桌面收起/恢复、减少动效、1199px 抽屉 Escape 回焦、390px 的 44×44px 按钮均通过，项目列表与阅读器把手位置一致，Runtime 异常与 error 日志为 0，截图已目视核对。
 - **验收命令**：隔离快照 `npm test`、`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0；`verify:flow` 全部离线场景通过，真实模型未测单列。
 - **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果；独立交付部分在已提交 R9 基线上完成全套测试与构建。**本次没做**：未改 PDF 重绘策略、业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果。
+
+## 卡 R12 · 论文滚动时固定侧栏拖动条（2026-11-25）
+
+- **根因与交付**：侧栏作为 Grid 项会被长正文拉伸，R10 虽已固定把手高度，但 `position: absolute; top: 0` 仍以侧栏为包含块，页面滚动时把手与树木一起上移。本卡改为桌面 `position: fixed; top: 56px`，水平位置用 `left: calc(var(--sidebar-width) - 6px)` 跟随栏宽；树木加载后的命中区改为 `left: calc(var(--sidebar-width) - 72px)`，与原 `right: -64px; width: 136px` 几何等价。保留 `100dvh - 56px` 高度、144px 树木、136px 命中区和窄屏隐藏规则。
+- **离线测试**：`web-sidebar.test.ts` 增加固定定位、顶栏下沿、栏宽公式与阅读路由回归断言，`web-sidebar-forest.test.ts` 同步水平定位断言；隔离快照定向测试 = **16/16 pass、exit 0**，完整 `npm test` = **251/251 pass、fail 0、exit 0**。`npm run verify:flow`、`npm run build:web`、`node --check web/assets/study.js`、`git diff --check` 均 exit 0。
+- **浏览器实测（当前混合工作区，1440×900，Headless Chrome + CDP，有效单页 PDF 与真实 IndexedDB）**：修复前文字重排 `scrollY=700` 时把手顶从 56px 移至 -644px；修复后原版与文字重排在 `scrollY=0/400/700/1500/最大滚动` 均保持把手顶 56px、高 844px，树木顶 40px、高 876px，原版画布 735×1041px。CDP 实际指针拖动 248→308px 后把手左移至 236px、高度不变并持久化；方向键/Home/End、桌面收起恢复、1199px 抽屉隐藏与 Escape 回焦均通过，横向溢出 0，Runtime 异常 0，截图已目视核对。
+- **未测/受限**：浏览器输入为 CDP 自动化事件，未声称物理鼠标验收；真实模型未测，`tsc` 未跑（依赖冻结）。原版/文字重排浏览器验收依赖当前混合工作区中尚未提交的阅读器布局代码，本卡提交不夹带该并行成果。当前混合工作区 `npm test` = **302/304 pass、exit 1**，两项均为前序既有 `web-ux.test.ts` 旧状态文案与旧根路径条件断言。**本次没做**：未改拖动 JS、PDF 重绘、业务 schema、模型服务、依赖、发布或站点访问范围，未纳入其他未提交卡片成果。

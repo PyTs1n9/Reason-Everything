@@ -244,7 +244,10 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   assert.match(collapsedSidebar, /padding-inline:\s*0/);
   assert.match(collapsedSidebar, /visibility:\s*hidden/);
   const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
-  assert.match(resizer, /top:\s*0/);
+  assert.match(resizer, /position:\s*fixed/);
+  assert.match(resizer, /top:\s*56px/);
+  assert.match(resizer, /left:\s*calc\(var\(--sidebar-width\) - 6px\)/);
+  assert.match(resizer, /right:\s*auto/);
   assert.match(resizer, /height:\s*calc\(100vh - 56px\)/);
   assert.match(resizer, /height:\s*calc\(100dvh - 56px\)/);
   assert.doesNotMatch(resizer, /bottom:\s*0/);
@@ -269,7 +272,8 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   const hitWidth = Number(readyResizer.match(/width:\s*(\d+)px/)?.[1]);
   assert.equal(hitWidth, 136);
   assert.ok(treeWidth - hitWidth > 0 && treeWidth - hitWidth <= 16, "命中区应略窄于树木贴图");
-  assert.match(readyResizer, /right:\s*-64px/);
+  assert.match(readyResizer, /left:\s*calc\(var\(--sidebar-width\) - 72px\)/);
+  assert.match(readyResizer, /right:\s*auto/);
   const readyTree = ruleBody(sidebarCss, ".shell.sidebar-tree-ready .sidebar-tree-image");
   assert.match(readyTree, /display:\s*block/);
   assert.match(readyTree, /right:\s*-4px/);
@@ -278,7 +282,11 @@ test("CSS：可变栏宽、收起归零、拖动命中区贴近树木且无分�
   assert.match(sidebarCss, /animation:\s*sidebar-leaf-fall 1100ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
 });
 
-test("CSS：阅读路由不额外下移侧栏，原版与文字重排共享同一把手位置", () => {
+test("CSS：论文页滚动时把手固定在顶栏下沿，原版与文字重排共享同一位置", () => {
+  const resizer = ruleBody(sidebarCss, ".sidebar-resizer");
+  assert.match(resizer, /position:\s*fixed/);
+  assert.match(resizer, /top:\s*56px/);
+  assert.match(resizer, /height:\s*calc\(100dvh - 56px\)/);
   assert.doesNotMatch(css, /body:has\(\.reader-layout\) \.sidebar\s*\{[^}]*top:/);
 });
 
